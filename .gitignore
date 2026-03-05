@@ -1,0 +1,30 @@
+# Môi trường ảo (Virtual Environments)
+.venv/
+venv/
+env/
+.env
+
+# ChromaDB & Vector Storage (Tránh đẩy hàng GB Index lên Github)
+chroma_db/
+.chroma/
+
+# Caching Contextual Enrichment (File hash MD5)
+.cache/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Log & Output
+logs/
+*.log
+
+# Cấu hình IDE / OS
+.vscode/
+.idea/
+.DS_Store
+*.swp
+
+# Thư mục tạm
+tmp/
+.pytest_cache/

@@ -1,0 +1,5 @@
+# Kiểm thử và Lint
+pytest==8.1.1
+pytest-asyncio==0.23.6
+ruff==0.3.4
+mypy==1.9.0

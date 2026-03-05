@@ -1,0 +1,23 @@
+# --- CORE & API ---
+fastapi==0.110.0
+uvicorn==0.29.0
+pydantic==2.6.4
+pydantic-settings==2.2.1
+
+# --- DATABASE & CACHE ---
+chromadb==0.4.24
+redis==5.0.3
+
+# --- DATA INGESTION ---
+youtube-transcript-api==0.6.2
+pytube==15.0.0
+langchain-text-splitters==0.0.1
+
+# --- ML & MODEL DRIVERS ---
+requests==2.31.0
+groq>=0.11.0                   # Groq SDK - Llama3 FREE
+rank-bm25==0.2.2               # BM25 sparse search
+sentence-transformers==2.6.1   # Bi-Encoder (bge-m3) & Cross-Encoder (bge-reranker)
+
+# --- UI ---
+streamlit==1.32.2
