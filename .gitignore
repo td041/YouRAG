@@ -28,3 +28,6 @@ logs/
 # Thư mục tạm
 tmp/
 .pytest_cache/
+
+# MLOps & ZenML (Local Meta-database)
+.zen/

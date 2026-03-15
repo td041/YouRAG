@@ -19,14 +19,14 @@ chromadb = "0.4.24"
 redis = "5.0.3"
 youtube-transcript-api = "1.2.4"
 pytubefix = "10.3.8"
-langchain-text-splitters = "0.0.1"
 requests = "2.31.0"
 groq = "1.0.0"
 openai = "1.14.2"
 rank-bm25 = "0.2.2"
 sentence-transformers = "2.6.1"
-streamlit = "1.32.2"
+streamlit = ">=1.35.0"
 httpx = "<0.28.0"
+zenml = {extras = ["server"], version = "^0.94.0"}
 
 [tool.poetry.group.dev.dependencies]
 pytest = "8.1.1"
