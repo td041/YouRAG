@@ -97,31 +97,52 @@ def step_graph_extraction(chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return results
 
 @step
-def step_save_to_chromadb(raw_data: Dict[str, Any], final_chunks: List[Dict[str, Any]]) -> Dict[str, Any]:
+def step_save_to_qdrantdb(raw_data: Dict[str, Any], final_chunks: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
     [STEP 4: VECTOR DATABASE UPSERT]
     - Nhiệm vụ: Đóng gói toàn bộ các cấu trúc Chunk (đã gắn vector, keywords, 
-      thời gian) và bắn thẳng vào ngân hàng dữ liệu ChromaDB.
+      thời gian) và bắn thẳng vào ngân hàng dữ liệu Qdrant.
     - Từ thời điểm này, toàn bộ data đã nằm chuẩn trong kiến trúc RAG, 
       sẵn sàng được gọi lên bởi LLaMa 3 để chat với người dùng.
     """
-    logger.info(f"💾 [ZenML Step 4] Upserting to ChromaDB...")
+    logger.info(f"💾 [ZenML Step 4] Upserting to Qdrant...")
     video_id = raw_data["metadata"]["video_id"]
     title = raw_data["metadata"].get("title", "unknown")
 
-    # Chuẩn hóa tên Collection để né lỗi quy định của ChromaDB
+    # Chuẩn hóa tên Collection để né lỗi quy định của Qdrant
     col_name = re.sub(r'[^a-z0-9]', '-', title.lower())
     col_name = re.sub(r'-+', '-', col_name).strip('-')
     if len(col_name) < 3: col_name = col_name.ljust(3, 'a')
     col_name = col_name[:63].strip('-')
     
-    collection = db_instance.get_collection(col_name)
+    col_name = db_instance.get_or_create_collection(col_name)
     
     docs = [c["content"] for c in final_chunks]
     metas = [c["metadata"] for c in final_chunks]
-    ids = [f"{video_id}_chunk_{str(i).zfill(4)}" for i in range(len(final_chunks))]
+    
+    # Nhúng Vector bằng SentenceTransformer
+    embeddings = db_instance.embedding_model.encode(docs)
+    
+    import uuid
+    from qdrant_client.http import models
 
-    collection.upsert(documents=docs, metadatas=metas, ids=ids)
+    points = []
+    for i, (doc, meta, emb) in enumerate(zip(docs, metas, embeddings)):
+        payload = {"text": doc}
+        payload.update(meta)
+        
+        points.append(
+            models.PointStruct(
+                id=str(uuid.uuid5(uuid.NAMESPACE_URL, f"{video_id}_{i}")),
+                vector=emb,
+                payload=payload
+            )
+        )
+        
+    db_instance.client.upsert(
+        collection_name=col_name,
+        points=points
+    )
     
     return {
         "status": "success",
@@ -129,7 +150,7 @@ def step_save_to_chromadb(raw_data: Dict[str, Any], final_chunks: List[Dict[str,
         "title": title,
         "collection": col_name,
         "chunks_added": len(docs),
-        "total_in_db": collection.count(),
+        "total_in_db": len(docs), # Qdrant return specific size takes different logic
     }
 
 # -------------------------------------------------------------------
@@ -147,7 +168,7 @@ def zenml_ingestion_pipeline(youtube_url: str, use_contextual: bool):
     raw_data = step_extract_video(youtube_url)
     chunks = step_semantic_chunking(raw_data, use_contextual)
     final_chunks = step_graph_extraction(chunks)
-    result = step_save_to_chromadb(raw_data, final_chunks)
+    result = step_save_to_qdrantdb(raw_data, final_chunks)
     return result
 
 

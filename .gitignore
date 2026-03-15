@@ -31,3 +31,4 @@ tmp/
 
 # MLOps & ZenML (Local Meta-database)
 .zen/
+qdrant_db/
