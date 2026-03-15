@@ -26,6 +26,7 @@ openai = "1.14.2"
 rank-bm25 = "0.2.2"
 sentence-transformers = "2.6.1"
 streamlit = "1.32.2"
+httpx = "<0.28.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "8.1.1"
