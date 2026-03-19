@@ -1,15 +1,19 @@
 import logging
 import sys
+from .config import settings
 
-def setup_logger(name: str = "YouRAG", level=logging.INFO):
-    """Cấu hình Log chuẩn Production hiển thị JSON (ẩn trong ví dụ này để dễ nhìn)"""
+def setup_logger(name: str = "YouRAG"):
+    """Cấu hình Log chuẩn Production"""
+    # Lấy level từ settings (mặc định INFO)
+    log_level = getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO)
+    
     logger = logging.getLogger(name)
-    logger.setLevel(level)
+    logger.setLevel(log_level)
 
     # Tránh duplicate logs
     if not logger.handlers:
         handler = logging.StreamHandler(sys.stdout)
-        handler.setLevel(level)
+        handler.setLevel(log_level)
         formatter = logging.Formatter(
             '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
         )

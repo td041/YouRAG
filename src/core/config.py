@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     GROQ_API_KEY: Optional[SecretStr] = None
 
     # 3. Vector Database Engine (QDRANT VƯƠNG GIẢ)
-    QDRANT_DB_PATH: str = os.path.join(os.getcwd(), "qdrant_db")
+    QDRANT_DB_PATH: str = "qdrant_db"
     QDRANT_SERVER_URL: Optional[str] = None # Khi lên Prod, điền URL vào biến này
     QDRANT_API_KEY: Optional[SecretStr] = None
 
@@ -35,7 +35,12 @@ class Settings(BaseSettings):
     LLM_PROVIDER: Literal["groq", "openai", "ollama"] = "groq"
     OLLAMA_BASE_URL: str = "http://localhost:11434/v1"
 
-    # 5. Các Núm Xoay Động Cơ RAG (RAG Tuning Dials)
+    # 5. Cấu hình vận hành (System Dials)
+    DEVICE: str = "cuda" # 'cuda' hoặc 'cpu'
+    LOG_LEVEL: str = "INFO"
+    VECTOR_SIZE: int = 1024 # BGE-M3
+    
+    # 6. Các Núm Xoay Động Cơ RAG (RAG Tuning Dials)
     TOP_K_RETRIEVAL: int = 15
     TOP_K_RERANK: int = 3
     SEMANTIC_CACHE_THRESHOLD: float = 0.92
