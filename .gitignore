@@ -32,3 +32,6 @@ tmp/
 # MLOps & ZenML (Local Meta-database)
 .zen/
 qdrant_db/
+
+# Local Knowledge Graph Store (Triples & Pickles)
+graph_store/
