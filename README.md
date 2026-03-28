@@ -1,34 +1,31 @@
-# YouRAG: Nền tảng Tìm kiếm Video YouTube & Tri thức Tích hợp AI (SOTA)
+# YouRAG: Nền tảng Tìm kiếm Video YouTube & Tri thức Tích hợp AI (Advanced SOTA)
 
-**YouRAG** là một hệ thống RAG (Retrieval-Augmented Generation) hiện đại, lấy luồng đầu vào là các video YouTube, "hấp thụ" (ingest) thông tin từ transcript/metadata, lập chỉ mục đa chiều và cho phép **Tra cứu Thông minh (Hybrid Search)** cũng như **Tóm tắt (Summarization)** dựa trên sức mạnh của các Large Language Model (LLM) hàng đầu thế giới (Groq, Llama, BAAI/bge).
+**YouRAG** là một hệ thống RAG (Retrieval-Augmented Generation) hiện đại bậc nhất, lấy luồng đầu vào là các video YouTube, "hấp thụ" (ingest) thông tin kết hợp **Đồ thị tri thức (Knowledge Graph)** nhằm cung cấp khả năng hỏi đáp và phân tích sâu mức độ chuyên gia. 
 
-Thay vì phải xem trọn vẹn đoạn video dài, YouRAG cho phép bạn bóc tách sâu kiến thức, hỏi đáp logic và nhanh chóng lấy được chính xác mốc thời gian (timestamp) của video tương ứng với câu hỏi của bạn.
+Thay vì sử dụng RAG truyền thống (chặt văn bản và tìm kiếm thô), YouRAG áp dụng **Ablation-tested SOTA Pipeline**, từ Ingestion đến Evaluation, nhằm tối ưu hóa độ chính xác và loại bỏ triệt để tình trạng ảo giác (Hallucination) của AI.
 
 ---
 
-## 🚀 Tính năng Cốt lõi (Core Features)
+## 🚀 Tính năng Cốt lõi (Advanced Core Features)
 
-### 1. MLOps & Ingestion SOTA (Hấp thụ và Đóng gói Kiến thức)
+### 1. 🏗️ MLOps & Ingestion (Hấp thụ và Đóng gói Kiến thức)
+- **ZenML Orchestration**: Luồng xử lý dữ liệu được quản trị hoàn toàn vòng đời bằng MLOps pipeline.
+- **Semantic Chunking & Contextual Enrichment**: Áp dụng kỹ thuật Anthropic, bơm thêm 1-2 câu ngữ cảnh gốc do LLM suy luận vào đầu mỗi Chunk để chống lại hiện tượng "Lost in the middle".
+- **LLM-based Graph Extraction**: Tự động sử dụng LLM để đọc, trích xuất bộ ba (Thực thể - Quan hệ - Đối tượng) từ video, dọn đường cho Graph RAG.
 
-- **ZenML Orchestration**: Luồng xử lý dữ liệu (Pipeline) được quản trị và điều phối hoàn toàn bằng **ZenML**, mang lại khả năng theo dõi tiến trình (Tracking) trực quan qua giao diện đồ thị DAG, giúp hệ thống chịu lỗi xuất sắc, không bao giờ phải cào lại dữ liệu từ đầu nếu mất mạng.
-- **Tải Metadata & Phụ đề song song**: Xử lý tải dữ liệu thô cực nhanh, lọc ký tự thừa chuẩn xác.
-- **Tiến trình Semantic Chunking**: Bóc lẻ nội dung dựa trên vector ngữ nghĩa kết hợp thuật toán Binary Search `O(log n)` để định vị siêu tốc thời gian (Start/End time) cho mỗi khối chữ (Chunk).
-- **Contextual Enrichment (Cải tiến Anthropic)**: Bơm thêm 1-2 câu ngữ cảnh gốc do LLM Llama3 suy luận vào đầu mỗi Chunk tĩnh, tiêu diệt hoàn toàn tình trạng "Lost in the middle" ở RAG cổ điển.
-- **Graph & Entity Extraction**: Tự động trích xuất Noun Phrases, Abbreviation bằng Rule-based & Regex làm siêu dữ liệu (Metadata) siêu nhạy cho Sparse Search.
+### 2. 🔍 Retrieval (Tra cứu Thông minh màng lọc 3 lớp)
+- **Qdrant Vector Engine**: Thay thế hoàn toàn ChromaDB bằng Qdrant Local Engine (Rust-based) cực nhẹ và siêu tốc, dùng `BAAI/bge-m3` nhúng Vector.
+- **NetworkX Graph Traversal**: Kích hoạt **Graph RAG** tìm kiếm các liên kết ẩn (multi-hop reasoning) mà Vector Search bị mù.
+- **Hybrid Search + RRF**: Tìm kiếm kép kết hợp Vector (Ý nghĩa) và BM25 (Từ khóa), hòa trộn điểm bằng thuật toán Reciprocal Rank Fusion.
+- **Cross-Encoder Reranking**: Trạm kiểm soát `mmarco-mMiniLMv2` chấm điểm chéo độc lập để lọc rác cực đoan (Zero-noise) trước khi giao cho LLM.
 
-### 2. Retrieval (Tra cứu Thông minh)
+### 3. 🧠 Generation (Bộ não tự soát lỗi)
+- **Graph-based Self-Correction**: Tính năng SOTA đỉnh cao! AI bắt buộc phải đối chiếu bản nháp câu trả lời với "Graph Facts" (Sự thật đồ thị). Nếu phát hiện mâu thuẫn hoặc ảo giác, AI phải tự động sửa lỗi trước khi xuất ra cho người dùng.
+- **Dynamic PromptBuilder**: Hỗ trợ xuất định dạng linh hoạt: Tự động vẽ sơ đồ tư duy (Mindmap qua Mermaid) hoặc kẻ bảng So sánh (Markdown Tables).
+- **Streaming Response**: Gõ chữ mượt mà kết hợp trích dẫn mốc thời gian `[mm:ss]` (bấm để xem thẳng video Youtube).
 
-Áp dụng phương pháp **Hybrid RAG** (Tìm kiếm Kép) kết hợp **Reranker** khắt khe nhất:
-
-- **Dense Search (Tìm Vector)**: Nhúng nhãn câu hỏi qua `BAAI/bge-m3` đa ngôn ngữ siêu việt.
-- **Sparse Search (BM25)**: Bắt dính tuyệt đối những từ khóa chuyên ngành, mã hiệu sản phẩm (Exact-match).
-- **Reciprocal Rank Fusion (RRF)**: Trộn kết quả và dung hòa điểm số (Fusion Rank) từ cả 2 mảng trên.
-- **Cross-Encoder Reranking**: Dùng trạm kiểm soát `mmarco-mMiniLMv2` chấm điểm chéo độc lập từng cặp (Query, Chunk) để lọc rác cực đoan (Zero-noise) trước khi giao cho LLM trả lời.
-
-### 3. Sáng tạo và Tóm tắt (Text Generation)
-
-- **Video Summarization (Tóm tắt video)**: Với 1 click, AI Llama3 70B sẽ đọc lại chuỗi Chunk của ChromaDB, ghi nhận thời gian tự nhiên và thay bạn tường thuật lại toàn cảnh nội dung Video.
-- **Streaming Response**: Chữ nhảy ra từ từ giống hệt ChatGPT kèm theo Nguồn (Timestamp) nhúng link HTML bấm mở thẳng Video Youtube để kiểm chứng.
+### 4. 🧪 Evaluation (Kiểm định Chất lượng)
+- **RAGAS Ablation Study**: Đường ống Benchmark tự động đo đạc sự tiến bộ của từng lớp SOTA (Naive → Hybrid → Reranker) qua 4 chỉ số vàng: *Faithfulness, Answer Relevancy, Context Precision, Context Recall*.
 
 ---
 
@@ -36,17 +33,17 @@ Thay vì phải xem trọn vẹn đoạn video dài, YouRAG cho phép bạn bóc
 
 | Lớp (Layer)            | Công nghệ sử dụng                    | Chức năng (Role)                             |
 | ---------------------- | ------------------------------------ | -------------------------------------------- |
-| **Orchestration MLOps**| `ZenML`                              | Quản trị/Điều phối luồng Data Pipeline       |
-| **Embedding**          | `BAAI/bge-m3`                        | Nhúng Vector ngữ nghĩa mạnh mẽ               |
-| **Reranker**           | `mmarco-mMiniLMv2-L12-H384`          | Mô hình chấm điểm và lọc nhiễu Retrieval     |
-| **Vector DB**          | `ChromaDB`                           | Lưu trữ Vector và phân chia Query            |
-| **Contextual LLM**     | `llama-3.1-8b-instant` (qua Groq)    | Phân tích và sinh bộ ngữ cảnh bơm vào Chunk  |
-| **Generation LLM**     | `llama-3.3-70b-versatile` (qua Groq) | Bộ não sinh từ và tương tác với User         |
-| **Frontend/Backend**   | `Streamlit` / `FastAPI`              | Giao diện Chat UI & Máy chủ API              |
+| **Orchestration**      | `ZenML`                              | Quản trị/Điều phối luồng Data Pipeline       |
+| **Core & Security**    | `Pydantic v2`                        | Quản lý cấu hình `SecretStr`, Singleton DB   |
+| **Vector DB**          | `Qdrant`                             | Máy chủ tìm kiếm Vector siêu tốc             |
+| **Graph DB**           | `NetworkX`                           | Lưu trữ và tính toán đường đi Đồ thị         |
+| **Embedding & Rerank** | `BAAI/bge-m3` & `mmarco-mMiniLMv2`   | Mô hình nhúng Vector và chấm điểm nhiễu      |
+| **Evaluation**         | `RAGAS Framework`                    | LLM-as-a-judge chấm điểm tự động             |
+| **LLM Provider**       | `llama-3.3-70b` (qua Groq API)       | Trái tim tạo ngôn ngữ và tự soát lỗi (Self-RAG)|
 
 ---
 
-## ⚙ Tiền Quyết & Thiết Lập Hệ Thống
+## ⚙ Thiết Lập Hệ Thống
 
 **1. Clone mã nguồn và Cài đặt Environment**
 ```bash
@@ -54,63 +51,34 @@ poetry install
 ```
 
 **2. Cấu hình Biến Môi trường (.env)**
-Trong file `.env` root, cung cấp API của Groq:
 ```env
 # SECRETS
 GROQ_API_KEY="gsk_xxxxx"
 
-# MODELS SETUP
-EMBEDDING_MODEL_NAME="BAAI/bge-m3"                  
-CROSS_ENCODER_MODEL="cross-encoder/mmarco-mMiniLMv2-L12-H384-v1"       
-LLM_MODEL_NAME="llama-3.3-70b-versatile"             
-LLM_CONTEXTUAL_MODEL="llama-3.1-8b-instant"          
-LLM_PROVIDER="groq"                                
+# SYSTEM DIALS
+DEVICE="cuda" # hoặc "cpu"
+LOG_LEVEL="INFO"
 ```
 
-**3. Khởi chạy Hệ Sinh Thái MLOps (Bấm 3 Terminal cúng lúc)**
+**3. Khởi chạy Hệ Sinh Thái Benchmark (Kiểm chứng SOTA)**
 ```bash
-# Terminal 1: Bật máy chủ FastAPI đằng sau
-poetry run uvicorn src.api.main:app --host 0.0.0.0 --port 8000
-
-# Terminal 2: Bật trang Web giao diện UI
-poetry run streamlit run app.py
-
-# Terminal 3: Bật trang theo dõi luồng Data Pipeline của ZenML
-poetry run zenml up
+poetry run python tests/run_benchmark.py --evaluate
 ```
 
 ---
 
-## 🗺 Lộ Trình Phát Triển (Roadmap - ĐÃ HOÀN TẤT 100%)
+## ✅ GAP TO PURE PRODUCTION (Những gì cần làm tiếp theo)
+Hệ thống hiện tại đã đạt cấu trúc lõi rất mạnh, tuy nhiên để thực sự **"Production-ready"** và chịu tải cho ngàn User, dự án cần triển khai các hệ thống sau:
 
-Dự án hiện tại đã vươn tới trạm cuối cùng của kiến trúc MLOps RAG thực chiến!
-
-### Phase 1: Ingestion Pipeline (Done)
-- [x] Chunking Timestamp Mapping siêu tốc
-- [x] Contextual Enrichment SOTA
-- [x] Graph Keyword Extraction Rule-based
-- [x] ZenML MLOps Orchestration Integration
-
-### Phase 2: Hybrid Retrieval & Generation (Done)
-- [x] BM25 Sparse Search
-- [x] Dense Search
-- [x] RRF Hybrid Search
-- [x] Video Summarization Moduler
-- [x] Cross-Encoder Reranking
-- [x] Prompt Builder Module
-
-### Phase 3: Giao Diện Tương Tác & API (Done)
-- [x] FastAPI Server cung cấp Streaming Chunk Data
-- [x] Streamlit Chat UI siêu mượt với Dark/Glassmorphism theme
-- [x] Clickable Youtube Timestamp Citation HTML Tags
-
----
-
-## ✅ Những Nâng Cấp Tương Lai (Gap to pure Production)
-Các hạng mục dưới đây giúp YouRAG đi từ bản MLOps cá nhân sang bản thương mại hóa cho vạn User:
-- Khắc phục Single-Point-of-Failure: Bổ sung LLM Router (Fallback từ Groq sang OpenAI/Gemini nếu cháy Rate Limit).
-- Đóng gói (Containerize): Bọc gesamte hệ thống vào các file Docker Compose để dễ dàng Scale in Kubernetes.
-- Theo dõi Hành vi (Tracking): Tích hợp Arize Phoenix hoặc LangSmith để đo lượng Token hao hụt và bắt "vết" LLM Hallucinations.
-- Vector DB: Nâng cấp thư mục ChromaDB tĩnh bằng Máy chủ Milvus dã chiến trên Cloud.
-
-> Được thiết kế với tư duy Software Architecture vững chắc. Sẵn sàng tích hợp cho các Nền tảng AI Thương mại.
+1. **Semantic Caching (Redis/GPTCache)**:
+   - *Vấn đề:* Gọi LLM cho các câu hỏi trùng lặp rất tốn kém và chậm.
+   - *Giải pháp:* Lắp bộ nhớ đệm Vector. Nếu câu hỏi mới trùng 95% ý nghĩa với câu hỏi cũ, móc ngay câu trả lời trong Cache ra (độ trễ 0.1s, chi phí $0).
+2. **Semantic Router & API (FastAPI)**:
+   - Dựng máy chủ RESTful API. Áp dụng Semantic Router để phân loại câu hỏi (Ví dụ: Hỏi thời tiết -> Chặn; Hỏi đếm số lượng -> Chuyển thẳng về Graph DB không qua Vector DB).
+3. **Frontend Application (Streamlit/Next.js)**:
+   - Xây dựng Web UI có chế độ Darkmode/Glassmorphism. Hiển thị trực quan Mindmap Mermaid bằng React component.
+4. **Containerization & CI/CD (Docker + GitHub Actions)**:
+   - Cần đóng hộp (Dockerize) toàn bộ App, Qdrant và Redis vào `docker-compose.yml`.
+   - Thiết lập GitHub Actions tự động Lint code (`ruff`), test RAGAS, và đẩy Image lên GHCR mỗi khi có Push.
+5. **Observability (Phoenix/LangSmith)**:
+   - Tích hợp công cụ đo vết (Tracing) để xem mỗi câu trả lời ngốn bao nhiêu Token và tốn bao nhiêu giây ở từng bước.
