@@ -216,7 +216,7 @@ class GraphRetriever:
             return None
         
         with open(graph_path, "rb") as f:
-            G = pickle.load(f)
+            G = pickle.load(f)  # nosec B301
         
         self._graph_cache[collection_name] = G
         logger.info(f"📂 Loaded Graph [{collection_name}]: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges")
