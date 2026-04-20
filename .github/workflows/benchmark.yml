@@ -1,0 +1,42 @@
+name: Automated RAG Benchmark
+
+on:
+  workflow_dispatch: # Cho phép chạy thủ công
+  pull_request:
+    branches: [ main, master ]
+    paths:
+      - 'src/engine/**'
+      - 'tests/**'
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    env:
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+    
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Poetry
+        uses: snok/install-poetry@v1
+
+      - name: Install dependencies
+        run: poetry install
+
+      - name: Run RAGAS Evaluation
+        run: |
+          # Chạy benchmark và lưu kết quả
+          poetry run python tests/run_benchmark.py --evaluate
+        continue-on-error: true # Không làm nghẽn CI nếu điểm thấp, chỉ để report
+
+      - name: Upload Benchmark Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: ragas-report
+          path: tests/benchmark/ragas_report.json

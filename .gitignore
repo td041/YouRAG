@@ -1,37 +1,160 @@
-# Môi trường ảo (Virtual Environments)
+# ================================================
+# SECRETS & ENVIRONMENT
+# ================================================
+.env
+.env.*
+!.env.example          # Cho phép file template mẫu
+*.secret
+secrets/
+
+# ================================================
+# PYTHON
+# ================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+*.pdb
+
+# Distribution / Packaging
+dist/
+build/
+*.egg-info/
+*.egg
+.eggs/
+MANIFEST
+
+# ================================================
+# VIRTUAL ENVIRONMENTS
+# ================================================
 .venv/
 venv/
 env/
-.env
+ENV/
+.python-version
 
-# ChromaDB & Vector Storage (Tránh đẩy hàng GB Index lên Github)
+# ================================================
+# VECTOR & GRAPH DATABASE (hàng GB — không push)
+# ================================================
+qdrant_db/
 chroma_db/
 .chroma/
+graph_store/*.gpickle       # Binary graphs (lớn, không versioning)
+graph_store/*.pickle
 
-# Caching Contextual Enrichment (File hash MD5)
-.cache/
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
+# graph_store/_triples.json vẫn được commit (nhỏ, debug hữu ích)
+# Nếu muốn ignore cả JSON: thêm dòng: graph_store/
 
-# Log & Output
+# ================================================
+# MACHINE LEARNING MODELS & WEIGHTS
+# ================================================
+*.bin                        # PyTorch / HuggingFace weights
+*.pt                         # PyTorch checkpoint
+*.pth                        # PyTorch checkpoint
+*.ckpt                       # Generic checkpoint
+*.safetensors               # HuggingFace safe format
+*.onnx                       # ONNX export
+*.h5                         # Keras / TF weights
+models/
+model_cache/
+.cache/                      # HuggingFace / sentence-transformers cache
+
+# ================================================
+# MLOPS & ORCHESTRATION
+# ================================================
+.zen/                        # ZenML local metadata store
+mlruns/                      # MLflow
+artifacts/                   # MLflow artifacts
+*.tfrecord
+
+# ================================================
+# TESTING & COVERAGE
+# ================================================
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+.tox/
+junit.xml
+test-results/
+
+# ================================================
+# BENCHMARK & EVALUATION OUTPUT
+# ================================================
+benchmark_results/
+ragas_output/
+*.ragas.json
+ablation_*.csv
+eval_*.json
+
+# ================================================
+# LOGS & MONITORING
+# ================================================
 logs/
 *.log
+*.log.*
+*.out
 
-# Cấu hình IDE / OS
+# ================================================
+# DOCKER
+# ================================================
+.docker/
+docker-compose.override.yml   # Local override (mỗi dev khác nhau)
+
+# ================================================
+# CACHING (REDIS / SEMANTIC CACHE)
+# ================================================
+dump.rdb                     # Redis dump
+appendonly.aof               # Redis AOF
+
+# ================================================
+# BUILD & PACKAGING
+# ================================================
+dist/
+build/
+*.egg-info/
+poetry.lock                  # KHÔNG ignore — cần lock cho reproducibility
+# Nếu là library thì uncomment dòng trên
+
+# ================================================
+# IDE & EDITOR
+# ================================================
 .vscode/
 .idea/
-.DS_Store
 *.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+*.sublime-workspace
 
-# Thư mục tạm
+# ================================================
+# BENCHMARK OUTPUT (generated — không cần track)
+# ================================================
+tests/benchmark/ragas_report.json
+tests/benchmark/eval_results_*.json
+
+# ================================================
+# OS FILES
+# ================================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# ================================================
+# TEMP & SCRATCH
+# ================================================
 tmp/
-.pytest_cache/
-
-# MLOps & ZenML (Local Meta-database)
-.zen/
-qdrant_db/
-
-# Local Knowledge Graph Store (Triples & Pickles)
-graph_store/
+temp/
+scratch/
+*.tmp
+*.temp
+*.bak
+*.orig
