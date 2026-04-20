@@ -4,6 +4,7 @@ from sentence_transformers import SentenceTransformer
 from .config import settings
 from .logger import logger
 import os
+import torch
 
 class VectorDatabase:
     """Singleton Qdrant Client siêu tốc & cực nhẹ (Rust-based).

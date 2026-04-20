@@ -1,0 +1,22 @@
+[
+    {
+        "query": "How do I win the game?",
+        "ground_truth_time": [60, 120]
+    },
+    {
+        "query": "Can I talk to my teammates during the mission?",
+        "ground_truth_time": [180, 240]
+    },
+    {
+        "query": "What happens if I cut the wrong wire?",
+        "ground_truth_time": [300, 360]
+    },
+    {
+        "query": "How many tokens do we start with?",
+        "ground_truth_time": [400, 450]
+    },
+    {
+        "query": "What are the rules for using the equipment?",
+        "ground_truth_time": [500, 560]
+    }
+]

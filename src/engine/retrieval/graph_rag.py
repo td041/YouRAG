@@ -23,8 +23,7 @@ import os
 import json
 import pickle
 import re
-from typing import List, Dict, Any, Set, Tuple, Optional
-from collections import defaultdict
+from typing import List, Dict, Any, Set, Optional
 
 import networkx as nx
 
@@ -245,7 +244,7 @@ Nếu không có entity rõ ràng, trả về []."""
             if response.startswith("```"):
                 response = response.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
             return json.loads(response)
-        except:
+        except Exception:
             # Fallback: Tách từ viết hoa
             words = re.findall(r'\b[A-Z][a-zÀ-ỹ]+(?:\s+[A-Z][a-zÀ-ỹ]+)*\b', query)
             return words if words else query.split()[:3]
@@ -326,7 +325,6 @@ Nếu không có entity rõ ràng, trả về []."""
         
         # 0. Lấy thống kê toàn cục để trị bệnh "mù chữ số" (Counting)
         # Chỉ lấy những node có tên riêng (viết hoa) hoặc có nhiều connections
-        all_nodes = list(G.nodes)
         important_nodes = sorted(G.degree, key=lambda x: x[1], reverse=True)[:50]
         nodes_str = ", ".join([node for node, deg in important_nodes])
         

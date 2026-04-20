@@ -1,10 +1,9 @@
 import re
 import numpy as np
-from typing import List, Dict, Tuple
+from typing import List, Dict
 from sentence_transformers import SentenceTransformer
 
 from src.core.logger import logger
-from src.core.config import settings
 
 
 def cosine_similarity(vec1: np.ndarray, vec2: np.ndarray) -> float:

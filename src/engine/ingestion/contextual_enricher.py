@@ -222,7 +222,7 @@ class ContextualEnricher:
                     logger.info(f"   Progress: {completed}/{len(chunks)} chunks enriched")
 
         elapsed = time.perf_counter() - t_start
-        cache_hits = sum(1 for c in results if c and c.get("metadata", {}).get("has_context") == True)
+        cache_hits = sum(1 for c in results if c and c.get("metadata", {}).get("has_context"))
         
         logger.info(
             f"✅ Contextual Enrichment hoàn tất: {elapsed:.2f}s | "

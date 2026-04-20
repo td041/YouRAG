@@ -1,4 +1,3 @@
-import time
 import re
 from typing import Dict, List, Any
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -41,7 +40,7 @@ def step_semantic_chunking(raw_data: Dict[str, Any], use_contextual: bool) -> Li
       (Context Summary) chèn vào từng chunk. Đây là kỹ thuật SOTA của Anthropic, 
       giúp công cụ Retrieval sau này không bao giờ bị "mù" ngữ cảnh.
     """
-    logger.info(f"🔪 [ZenML Step 2] Semantic Chunking & Contextual Enrichment...")
+    logger.info("🔪 [ZenML Step 2] Semantic Chunking & Contextual Enrichment...")
     llm_client = None
     if use_contextual:
         try:
@@ -78,7 +77,7 @@ def step_graph_extraction(chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     - Mục đích: Từ khóa này sẽ tiếp sức cho bộ máy BM25 (Sparse Retrieval), 
       giúp tìm kiếm từ khóa chính xác (Exact-match) hoạt động vượt trội hơn.
     """
-    logger.info(f"🕸️ [ZenML Step 3] Graph & Keyword Extraction...")
+    logger.info("🕸️ [ZenML Step 3] Graph & Keyword Extraction...")
     graph_rag = GraphExtractor()
     results = [None] * len(chunks)
     
@@ -105,14 +104,15 @@ def step_save_to_qdrantdb(raw_data: Dict[str, Any], final_chunks: List[Dict[str,
     - Từ thời điểm này, toàn bộ data đã nằm chuẩn trong kiến trúc RAG, 
       sẵn sàng được gọi lên bởi LLaMa 3 để chat với người dùng.
     """
-    logger.info(f"💾 [ZenML Step 4] Upserting to Qdrant...")
+    logger.info("💾 [ZenML Step 4] Upserting to Qdrant...")
     video_id = raw_data["metadata"]["video_id"]
     title = raw_data["metadata"].get("title", "unknown")
 
     # Chuẩn hóa tên Collection để né lỗi quy định của Qdrant
     col_name = re.sub(r'[^a-z0-9]', '-', title.lower())
     col_name = re.sub(r'-+', '-', col_name).strip('-')
-    if len(col_name) < 3: col_name = col_name.ljust(3, 'a')
+    if len(col_name) < 3:
+        col_name = col_name.ljust(3, 'a')
     col_name = col_name[:63].strip('-')
     
     col_name = db_instance.get_or_create_collection(col_name)
@@ -188,14 +188,12 @@ class IngestionPipeline:
             use_contextual=self.use_contextual_enrichment
         )
         
-        logger.info(f"✅ ZENML PIPELINE COMPLETED SUCCESSFULLY!")
+        logger.info("✅ ZENML PIPELINE COMPLETED SUCCESSFULLY!")
         
         # Trả về bộ từ điển (Dict) giả lập khớp 100% với phiên bản code cũ.
         # Điều này giúp Streamlit / FastAPI UI bên ngoài không hề biết code lõi đã 
         # mọc thêm cánh MLOps ZenML, bảo vệ an toàn cho hệ thống khỏi bị Crash.
-        import re
-        title = "ZenML Processed Video"
-        col_name = re.sub(r'[^a-z0-9]', '-', title.lower()).strip('-').ljust(3, 'a')[:63]
+        # col_name calculation unused mock removed
         
         return {
             "status": "success",

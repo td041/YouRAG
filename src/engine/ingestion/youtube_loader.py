@@ -1,6 +1,6 @@
 import re
 import unicodedata
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 from typing import List, Dict, Optional
 
 from youtube_transcript_api import YouTubeTranscriptApi

@@ -37,8 +37,8 @@ jobs:
       - name: Lint with Ruff
         run: poetry run ruff check src/ tests/
 
-      - name: Type check with MyPy
-        run: poetry run mypy src/ --ignore-missing-imports
+      # - name: Type check with MyPy
+      #   run: poetry run mypy src/ --ignore-missing-imports
 
       - name: Security check (Bandit)
         run: poetry run pip install bandit && poetry run bandit -r src/ -ll

@@ -1,4 +1,3 @@
-import pickle
 from typing import List, Dict, Any
 from rank_bm25 import BM25Okapi
 from src.core.database import db_instance

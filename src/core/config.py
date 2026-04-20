@@ -1,4 +1,3 @@
-import os
 from typing import Optional, Literal
 from pydantic import SecretStr, computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
