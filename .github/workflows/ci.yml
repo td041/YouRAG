@@ -43,5 +43,5 @@ jobs:
       - name: Security check (Bandit)
         run: poetry run pip install bandit && poetry run bandit -r src/ -ll
 
-      - name: Run Unit Tests with Pytest
-        run: poetry run pytest tests/unit/ -v
+      - name: Run Unit Tests and Coverage
+        run: poetry run pytest tests/unit/ -v --cov=src --cov-report=xml
