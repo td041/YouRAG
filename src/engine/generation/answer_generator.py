@@ -1,6 +1,7 @@
 from typing import List, Dict, Any, Optional
 from src.engine.generation.llm_client import LLMClient
 from src.engine.generation.prompt_builder import PromptBuilder
+from src.cache.semantic_cache import SemanticCache
 from src.core.logger import logger
 from src.core.utils import format_timestamp
 
@@ -11,6 +12,7 @@ class AnswerGenerator:
 
     def __init__(self):
         self.llm = LLMClient()
+        self.cache = SemanticCache()
         
     def _build_context_string(self, chunks: List[Dict[str, Any]]) -> str:
         """Đóng gói các đoạn tài liệu thành một định dạng văn bản dễ đọc cho LLM."""
@@ -43,7 +45,11 @@ class AnswerGenerator:
     def generate(self, query: str, retrieved_chunks: List[Dict[str, Any]], global_summary: Optional[str] = None, graph_facts: Optional[List[str]] = None, graph_summary: Optional[str] = None) -> str:
         """Thực thi sinh câu trả lời RAG với bối cảnh thực thể từ Knowledge Graph."""
         logger.info(f"✨ Production Generation (Graph Enhanced): '{query}'")
-        
+
+        cached = self.cache.check_cache(query)
+        if cached is not None:
+            return cached
+
         context_str = self._build_context_string(retrieved_chunks)
         
         # Quyết định mode
@@ -76,10 +82,12 @@ class AnswerGenerator:
                     max_tokens=2000,
                     temperature=0.1
                 )
+                self.cache.save_to_cache(query, final_answer)
                 return final_answer
-            
+
+            self.cache.save_to_cache(query, draft_answer)
             return draft_answer
-            
+
         except Exception as e:
             logger.error(f"❌ Lỗi Generation: {e}")
             return f"Lỗi: {str(e)}"
