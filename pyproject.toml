@@ -23,7 +23,6 @@ groq = "1.0.0"
 openai = "1.14.2"
 rank-bm25 = "0.2.2"
 sentence-transformers = "2.6.1"
-streamlit = ">=1.35.0"
 httpx = "<0.28.0"
 zenml = {extras = ["server"], version = "^0.94.0"}
 qdrant-client = "^1.17.1"
