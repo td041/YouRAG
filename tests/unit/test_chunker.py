@@ -12,7 +12,7 @@ def mock_sentence_transformer(mocker):
     mock_st.return_value = mock_instance
     return mock_st
 
-from src.engine.ingestion.chunker import cosine_similarity, SemanticChunker
+from src.engine.ingestion.chunker import cosine_similarity, SemanticChunker  # noqa: E402
 
 def test_cosine_similarity():
     """Kiểm tra hàm tính cosine similarity toán học."""

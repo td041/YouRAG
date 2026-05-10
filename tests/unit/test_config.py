@@ -1,4 +1,3 @@
-import os
 from pydantic import SecretStr
 from src.core.config import Settings
 

@@ -158,3 +158,9 @@ scratch/
 *.temp
 *.bak
 *.orig
+
+# Local project guides and internal docs (not for repo)
+CLAUDE.md
+docs/FUTURE_UPGRADES.md
+.claude/
+modify_app.py

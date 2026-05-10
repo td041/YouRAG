@@ -1,6 +1,5 @@
 """Tests for PromptBuilder — pure static class, no mocking needed."""
 
-import pytest
 from src.engine.generation.prompt_builder import PromptBuilder
 
 

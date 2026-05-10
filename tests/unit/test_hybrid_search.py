@@ -1,7 +1,6 @@
 """Tests for HybridRetriever — RRF fusion formula, ranking, edge cases."""
 
 import pytest
-from unittest.mock import MagicMock
 
 # Mock DenseRetriever and SparseRetriever BEFORE importing HybridRetriever
 # because __init__ constructs them immediately

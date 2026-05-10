@@ -1,8 +1,7 @@
 """Tests for LLMClient — provider selection, retry logic, rate-limit backoff."""
 
 import pytest
-import time
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 # Mock settings và groq TRƯỚC KHI import LLMClient để tránh module-level side effects
 @pytest.fixture(autouse=True)

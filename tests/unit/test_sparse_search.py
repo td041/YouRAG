@@ -1,7 +1,7 @@
 """Tests for SparseRetriever — BM25 keyword search with mocked db_instance."""
 
 import pytest
-from unittest.mock import MagicMock, call
+from unittest.mock import MagicMock
 
 
 @pytest.fixture(autouse=True)
