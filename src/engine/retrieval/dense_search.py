@@ -27,22 +27,24 @@ class DenseRetriever:
             # Nhúng vector câu hỏi
             query_vector = self.db.embedding_model.encode([query])[0]
             
-            # Gửi truy vấn Vector sang Qdrant Server
-            results = self.db.client.search(
+            # Gửi truy vấn Vector sang Qdrant (API 1.10+)
+            response = self.db.client.query_points(
                 collection_name=collection_name,
-                query_vector=query_vector,
-                limit=self.top_k
+                query=query_vector.tolist(),
+                limit=self.top_k,
+                with_payload=True,
             )
+            results = response.points
 
             # Phân tách và trả về dữ liệu chuẩn
             formatted_chunks = []
-            
+
             if not results:
                 logger.warning(f"Không tìm thấy kết quả nào cho query: {query}")
                 return formatted_chunks
-                
+
             for res in results:
-                payload = res.payload or {}
+                payload = dict(res.payload or {})
                 content = payload.pop("text", "")
                 
                 formatted_chunks.append({
