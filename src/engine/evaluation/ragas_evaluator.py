@@ -1,362 +1,551 @@
 """
-RAGAS Evaluator - Đánh giá RAG Pipeline theo chuẩn nghiên cứu.
+RAGAS Evaluator - Đánh giá RAG Pipeline theo chuẩn nghiên cứu SOTA.
 
-Tích hợp Framework RAGAS (Retrieval Augmented Generation Assessment)
-để đo lường chất lượng toàn diện của hệ thống YouRAG.
+Tích hợp RAGAS 0.4.x để đo lường toàn diện chất lượng YouRAG với 5 metrics:
+- Faithfulness         : Câu trả lời trung thành với context không? (Hallucination check)
+- Answer Relevancy     : Câu trả lời có liên quan đến câu hỏi không?
+- Context Precision    : Context truy xuất được có chính xác, không nhiễu không?
+- Context Recall       : Context có bao phủ đủ ground truth không?
+- Factual Correctness  : Câu trả lời đúng thực tế so với ground truth không?
 
-Metrics đo đạc:
-- Faithfulness: Câu trả lời có trung thành với context không?
-- Answer Relevancy: Câu trả lời có liên quan đến câu hỏi không?
-- Context Precision: Context được truy xuất có chính xác không?
-- Context Recall: Context có bao phủ đủ ground truth không?
+Ablation Study 3 tầng:
+  Tầng 0 - NAIVE      : Dense Search only (baseline)
+  Tầng 1 - HYBRID     : Dense + BM25 Sparse (RRF fusion)
+  Tầng 2 - ADVANCED   : Hybrid + Cross-Encoder Reranker (SOTA)
 """
 
 import json
 import os
 import sys
 import time
-from typing import List, Dict, Any
+from datetime import datetime
+from typing import Any, Dict, List, Optional
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..')))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../..")))
 
-from src.core.database import db_instance
 from src.core.config import settings
+from src.core.database import db_instance
 from src.core.logger import logger
+from src.engine.generation.answer_generator import AnswerGenerator
+from src.engine.ranking.cross_encoder import CrossEncoderReranker
 from src.engine.retrieval.dense_search import DenseRetriever
 from src.engine.retrieval.hybrid_search import HybridRetriever
-from src.engine.ranking.cross_encoder import CrossEncoderReranker
-from src.engine.generation.answer_generator import AnswerGenerator
+
+# Đường dẫn mặc định cho dataset và report
+_BENCHMARK_DIR = os.path.join(os.path.dirname(__file__), "../../../tests/benchmark")
+_DEFAULT_DATASET = os.path.join(_BENCHMARK_DIR, "eval_dataset.json")
+_DEFAULT_REPORT_JSON = os.path.join(_BENCHMARK_DIR, "ragas_report.json")
+_DEFAULT_REPORT_MD = os.path.join(_BENCHMARK_DIR, "ragas_report.md")
 
 
 class RAGASEvaluator:
-    """Đánh giá End-to-End hệ thống RAG theo chuẩn RAGAS.
-    
-    Pipeline đánh giá:
-    1. Load Evaluation Dataset (từ file JSON)
-    2. Chạy RAG Pipeline (Retrieve → Rerank → Generate) cho từng câu hỏi
-    3. Thu thập dữ liệu: question, answer, contexts, ground_truth
-    4. Gọi RAGAS Framework tính toán metrics
-    5. Xuất báo cáo chi tiết
+    """Đánh giá End-to-End hệ thống YouRAG theo chuẩn RAGAS 0.4.x.
+
+    Pipeline:
+    1. Load eval_dataset.json (question + ground_truth + reference_context)
+    2. Chạy RAG pipeline 3 chế độ: naive / hybrid / advanced
+    3. Thu thập (user_input, response, retrieved_contexts, reference)
+    4. Tính 5 RAGAS metrics với Groq LLM + HuggingFace embeddings
+    5. Xuất báo cáo JSON + Markdown chi tiết
     """
 
-    def __init__(self):
-        # Khởi tạo các Engine theo đúng pattern dự án
+    def __init__(self) -> None:
         self.hybrid_retriever = HybridRetriever(top_k=10)
-        self.naive_retriever = DenseRetriever(top_k=3)
+        self.naive_retriever = DenseRetriever(top_k=5)
         self.reranker = CrossEncoderReranker()
         self.generator = AnswerGenerator()
         self.db = db_instance
 
-    def _load_dataset(self, dataset_path: str) -> List[Dict]:
-        """Load bộ câu hỏi đánh giá từ file JSON."""
-        with open(dataset_path, "r", encoding="utf-8") as f:
-            return json.load(f)
+    # ------------------------------------------------------------------
+    # Dataset
+    # ------------------------------------------------------------------
 
-    def _run_rag_pipeline(self, query: str, collection_name: str, mode: str = "advanced") -> Dict:
-        """Chạy RAG pipeline cho 1 câu hỏi, trả về answer + contexts.
-        
-        Args:
-            query: Câu hỏi
-            collection_name: Collection Qdrant
-            mode: 'naive' (Dense), 'hybrid_only' (Hybrid), hoặc 'advanced' (Hybrid+Rerank)
-        """
+    def _load_dataset(self, dataset_path: str) -> List[Dict]:
+        """Load eval dataset từ JSON. Hỗ trợ cả format cũ lẫn format mới."""
+        with open(dataset_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        validated = []
+        for item in data:
+            if "question" not in item or "ground_truth" not in item:
+                logger.warning(f"⚠️  Bỏ qua item thiếu field: {list(item.keys())}")
+                continue
+            validated.append(item)
+
+        if not validated:
+            raise ValueError(
+                f"Dataset tại '{dataset_path}' không có item hợp lệ. "
+                "Mỗi item phải có 'question' và 'ground_truth'. "
+                "Hãy chạy --generate trước."
+            )
+        return validated
+
+    # ------------------------------------------------------------------
+    # RAG Pipeline runner
+    # ------------------------------------------------------------------
+
+    def _run_pipeline(
+        self, query: str, collection_name: str, mode: str
+    ) -> Dict[str, Any]:
+        """Chạy một trong 3 chế độ RAG, trả về answer + contexts + latency."""
         t0 = time.time()
-        
+
         if mode == "naive":
-            # Baseline: Dense Search thô, không Rerank
             results = self.naive_retriever.search(query, collection_name)
-            contexts = [r["content"] for r in results]
-        elif mode == "hybrid_only":
-            # Cấp 1 SOTA: Hybrid Search (Chưa có Reranker)
+            top_results = results[:5]
+
+        elif mode == "hybrid":
             candidates = self.hybrid_retriever.search(query, collection_name)
-            results = candidates[:4] # Cắt top 4 để so sánh công bằng
-            contexts = [r["content"] for r in results]
-        else:
-            # Cấp 2 SOTA: Hybrid Search + Cross-Encoder Reranker (Advanced)
+            top_results = candidates[:5]
+
+        else:  # advanced
             candidates = self.hybrid_retriever.search(query, collection_name)
-            results = self.reranker.rerank(query=query, chunks=candidates, top_k=4)
-            contexts = [r["content"] for r in results]
-        
-        # Generate Answer
-        answer = self.generator.generate(query=query, retrieved_chunks=results)
-        
-        latency = time.time() - t0
-        
+            top_results = self.reranker.rerank(query=query, chunks=candidates, top_k=5)
+
+        contexts = [r["content"] for r in top_results if r.get("content")]
+        answer = self.generator.generate(query=query, retrieved_chunks=top_results)
+
         return {
             "answer": answer,
             "contexts": contexts,
-            "latency": round(latency, 3),
-            "num_chunks": len(results)
+            "latency": round(time.time() - t0, 3),
+            "num_chunks": len(top_results),
         }
 
-    def evaluate_with_ragas(
-        self,
-        collection_name: str,
-        dataset_path: str = None,
-        mode: str = "advanced"
-    ) -> Dict[str, Any]:
-        """Chạy đánh giá RAGAS đầy đủ.
-        
-        Args:
-            collection_name: Tên Collection Qdrant
-            dataset_path: Đường dẫn file eval_dataset.json
-            mode: 'naive' hoặc 'advanced'
-            
-        Returns:
-            Dict chứa các metrics RAGAS + chi tiết từng câu hỏi
-        """
-        if dataset_path is None:
-            dataset_path = os.path.join(os.getcwd(), "tests", "benchmark", "eval_dataset.json")
-        
-        dataset = self._load_dataset(dataset_path)
-        logger.info(f"🧪 RAGAS Evaluation [{mode.upper()}]: {len(dataset)} câu hỏi → [{collection_name}]")
-        
-        # Thu thập dữ liệu cho RAGAS
-        questions = []
-        answers = []
-        contexts_list = []
-        ground_truths = []
-        latencies = []
-        per_question_results = []
-        
-        for idx, item in enumerate(dataset, 1):
-            query = item["question"]
-            gt = item["ground_truth"]
-            
-            logger.info(f"\n   [{idx}/{len(dataset)}] Q: {query[:60]}...")
-            
-            # Chạy RAG Pipeline
-            result = self._run_rag_pipeline(query, collection_name, mode=mode)
-            
-            questions.append(query)
-            answers.append(result["answer"])
-            contexts_list.append(result["contexts"])
-            ground_truths.append(gt)
-            latencies.append(result["latency"])
-            
-            per_question_results.append({
-                "question": query,
-                "answer": result["answer"][:200] + "...",
-                "ground_truth": gt[:200] + "...",
-                "num_contexts": result["num_chunks"],
-                "latency": result["latency"]
-            })
-            
-            logger.info(f"   ✅ Answer: {result['answer'][:80]}... ({result['latency']}s)")
-        
-        # Tính metrics bằng RAGAS
-        ragas_scores = self._compute_ragas_metrics(
-            questions, answers, contexts_list, ground_truths
+    # ------------------------------------------------------------------
+    # RAGAS metrics computation
+    # ------------------------------------------------------------------
+
+    def _build_ragas_llm(self) -> Any:
+        """Tạo Groq-backed LLM cho RAGAS thông qua OpenAI-compatible API."""
+        from langchain_openai import ChatOpenAI
+        from ragas.llms import LangchainLLMWrapper
+
+        groq_key = (
+            settings.GROQ_API_KEY.get_secret_value()
+            if settings.GROQ_API_KEY
+            else os.getenv("GROQ_API_KEY", "")
         )
-        
-        # Tổng hợp báo cáo
-        avg_latency = round(sum(latencies) / len(latencies), 3) if latencies else 0
-        
-        report = {
-            "mode": mode,
-            "total_questions": len(dataset),
-            "avg_latency_s": avg_latency,
-            "ragas_scores": ragas_scores,
-            "per_question": per_question_results
-        }
-        
-        return report
+        llm = ChatOpenAI(
+            model="llama-3.1-8b-instant",
+            openai_api_key=groq_key,
+            openai_api_base="https://api.groq.com/openai/v1",
+            temperature=0.0,
+            max_tokens=1024,
+            n=1,
+        )
+        return LangchainLLMWrapper(llm)
+
+    def _build_ragas_embeddings(self) -> Any:
+        """Tạo HuggingFace embeddings cho RAGAS (dùng lại sentence-transformers đã cài)."""
+        from langchain_community.embeddings import HuggingFaceEmbeddings
+        from ragas.embeddings import LangchainEmbeddingsWrapper
+
+        hf_emb = HuggingFaceEmbeddings(
+            model_name="all-MiniLM-L6-v2",
+            model_kwargs={"device": "cpu"},
+            encode_kwargs={"normalize_embeddings": True},
+        )
+        return LangchainEmbeddingsWrapper(hf_emb)
 
     def _compute_ragas_metrics(
         self,
         questions: List[str],
         answers: List[str],
-        contexts: List[List[str]],
-        ground_truths: List[str]
-    ) -> Dict[str, float]:
-        """Gọi RAGAS Framework để tính toán các metrics."""
+        contexts_list: List[List[str]],
+        ground_truths: List[str],
+    ) -> Dict[str, Any]:
+        """Tính 5 RAGAS metrics chuẩn SOTA với RAGAS 0.4.x API."""
         try:
             from ragas import evaluate
+            from ragas.dataset_schema import EvaluationDataset, SingleTurnSample
             from ragas.metrics import (
-                faithfulness,
-                answer_relevancy,
-                context_precision,
-                context_recall,
+                _answer_relevancy,
+                _context_precision,
+                _context_recall,
+                _faithfulness,
             )
-            from datasets import Dataset
+            from ragas.metrics._factual_correctness import FactualCorrectness
 
-            # Chuẩn bị data theo format RAGAS
-            eval_data = {
-                "question": questions,
-                "answer": answers,
-                "contexts": contexts,
-                "ground_truth": ground_truths,
-            }
-            
-            eval_dataset = Dataset.from_dict(eval_data)
-            
-            # Cấu hình LLM cho RAGAS (dùng Groq thông qua OpenAI-compatible)
-            from langchain_openai import ChatOpenAI
-            
-            groq_key = settings.GROQ_API_KEY.get_secret_value() if settings.GROQ_API_KEY else ""
-            
-            ragas_llm = ChatOpenAI(
-                model="llama-3.1-8b-instant",
-                openai_api_key=groq_key,
-                openai_api_base="https://api.groq.com/openai/v1",
-                temperature=0.0,
-                max_tokens=1024,
-            )
+            ragas_llm = self._build_ragas_llm()
+            ragas_emb = self._build_ragas_embeddings()
 
-            # Chạy RAGAS Evaluation
-            logger.info("\n🔬 Đang chạy RAGAS metrics (có thể mất vài phút)...")
-            
+            # Cấu hình LLM + Embeddings cho từng metric
+            _faithfulness.llm = ragas_llm
+            _answer_relevancy.llm = ragas_llm
+            _answer_relevancy.embeddings = ragas_emb
+            _context_precision.llm = ragas_llm
+            _context_recall.llm = ragas_llm
+
+            factual_correctness = FactualCorrectness()
+            factual_correctness.llm = ragas_llm
+
+            # Build EvaluationDataset theo RAGAS 0.4.x schema
+            samples = [
+                SingleTurnSample(
+                    user_input=q,
+                    response=a,
+                    retrieved_contexts=ctx,
+                    reference=gt,
+                )
+                for q, a, ctx, gt in zip(questions, answers, contexts_list, ground_truths)
+            ]
+            dataset = EvaluationDataset(samples=samples)
+
+            logger.info("🔬 Đang tính RAGAS metrics (có thể mất 1-3 phút)...")
             result = evaluate(
-                dataset=eval_dataset,
+                dataset=dataset,
                 metrics=[
-                    faithfulness,
-                    answer_relevancy,
-                    context_precision,
-                    context_recall,
+                    _faithfulness,
+                    _answer_relevancy,
+                    _context_precision,
+                    _context_recall,
+                    factual_correctness,
                 ],
-                llm=ragas_llm,
+                raise_exceptions=False,
+                show_progress=True,
             )
-            
-            scores = {
-                "faithfulness": round(result["faithfulness"], 4),
-                "answer_relevancy": round(result["answer_relevancy"], 4),
-                "context_precision": round(result["context_precision"], 4),
-                "context_recall": round(result["context_recall"], 4),
-            }
-            
-            logger.info(f"   📊 RAGAS Scores: {scores}")
+
+            # Lấy điểm trung bình
+            scores: Dict[str, Any] = {}
+            df = result.to_pandas()
+
+            metric_cols = [
+                "faithfulness",
+                "answer_relevancy",
+                "context_precision",
+                "context_recall",
+                "factual_correctness",
+            ]
+            for col in metric_cols:
+                if col in df.columns:
+                    scores[col] = round(float(df[col].mean(skipna=True)), 4)
+
+            # Per-question chi tiết
+            scores["_per_question"] = df[
+                [c for c in metric_cols if c in df.columns]
+            ].to_dict(orient="records")
+
+            logger.info(f"📊 Scores: { {k: v for k, v in scores.items() if not k.startswith('_')} }")
             return scores
-            
+
         except Exception as e:
-            logger.error(f"❌ Lỗi RAGAS computation: {e}")
-            logger.warning("⚠️ Fallback: Tính metrics thủ công (Hit Rate + MRR)")
-            return self._fallback_metrics(questions, answers, contexts, ground_truths)
+            logger.error(f"❌ Lỗi RAGAS: {e}")
+            logger.warning("⚠️  Fallback: tính Hit Rate + MRR thủ công")
+            return self._fallback_metrics(questions, answers, contexts_list, ground_truths)
 
     def _fallback_metrics(
         self,
         questions: List[str],
         answers: List[str],
         contexts: List[List[str]],
-        ground_truths: List[str]
+        ground_truths: List[str],
     ) -> Dict[str, float]:
-        """Metrics dự phòng khi RAGAS gặp lỗi (Rate Limit, API Error...)."""
-        hits = 0
-        mrr_sum = 0.0
-        
-        for i, (gt, ctx_list) in enumerate(zip(ground_truths, contexts)):
-            gt_lower = gt.lower()
+        """Metrics dự phòng khi RAGAS gặp lỗi (dựa trên keyword overlap)."""
+        hits, mrr_sum = 0, 0.0
+
+        for gt, ctx_list in zip(ground_truths, contexts):
+            gt_words = set(gt.lower().split())
             for rank, ctx in enumerate(ctx_list, 1):
-                # Kiểm tra overlap từ khóa giữa ground_truth và context
-                gt_words = set(gt_lower.split())
-                ctx_words = set(ctx.lower().split())
-                overlap = len(gt_words & ctx_words) / max(len(gt_words), 1)
-                
-                if overlap > 0.3:  # Threshold 30% overlap
+                overlap = len(gt_words & set(ctx.lower().split())) / max(len(gt_words), 1)
+                if overlap > 0.25:
                     hits += 1
                     mrr_sum += 1.0 / rank
                     break
-        
-        total = len(questions) if questions else 1
+
+        total = max(len(questions), 1)
         return {
             "hit_rate": round(hits / total, 4),
             "mrr": round(mrr_sum / total, 4),
-            "faithfulness": -1.0,  # Không khả dụng
-            "answer_relevancy": -1.0,
-            "context_precision": -1.0,
-            "context_recall": -1.0,
-            "note": "Fallback mode - RAGAS unavailable"
+            "faithfulness": None,
+            "answer_relevancy": None,
+            "context_precision": None,
+            "context_recall": None,
+            "factual_correctness": None,
+            "_fallback": True,
+            "_note": "RAGAS unavailable — showing keyword-overlap proxies only",
         }
+
+    # ------------------------------------------------------------------
+    # Single-mode evaluation
+    # ------------------------------------------------------------------
+
+    def evaluate(
+        self,
+        collection_name: str,
+        mode: str = "advanced",
+        dataset_path: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Đánh giá 1 chế độ RAG và trả về báo cáo đầy đủ.
+
+        Args:
+            collection_name: Tên collection Qdrant
+            mode: 'naive' | 'hybrid' | 'advanced'
+            dataset_path: Đường dẫn eval_dataset.json (mặc định: tests/benchmark/)
+        """
+        path = dataset_path or _DEFAULT_DATASET
+        dataset = self._load_dataset(path)
+
+        logger.info(f"\n{'='*60}")
+        logger.info(f"🧪 RAGAS [{mode.upper()}]: {len(dataset)} câu hỏi → [{collection_name}]")
+        logger.info(f"{'='*60}")
+
+        questions, answers, contexts_list, ground_truths = [], [], [], []
+        per_question: List[Dict] = []
+        latencies: List[float] = []
+
+        for idx, item in enumerate(dataset, 1):
+            query = item["question"]
+            gt = item["ground_truth"]
+            logger.info(f"\n[{idx}/{len(dataset)}] Q: {query[:80]}")
+
+            out = self._run_pipeline(query, collection_name, mode)
+
+            questions.append(query)
+            answers.append(out["answer"])
+            contexts_list.append(out["contexts"])
+            ground_truths.append(gt)
+            latencies.append(out["latency"])
+
+            per_question.append(
+                {
+                    "question": query,
+                    "answer": out["answer"],
+                    "ground_truth": gt,
+                    "num_contexts": out["num_chunks"],
+                    "latency_s": out["latency"],
+                }
+            )
+            logger.info(f"   → {out['answer'][:100]}... ({out['latency']}s)")
+
+        ragas_scores = self._compute_ragas_metrics(
+            questions, answers, contexts_list, ground_truths
+        )
+
+        # Gắn per-question RAGAS scores vào per_question list
+        per_q_ragas = ragas_scores.pop("_per_question", [])
+        for i, row in enumerate(per_q_ragas):
+            if i < len(per_question):
+                per_question[i]["ragas_scores"] = row
+
+        avg_lat = round(sum(latencies) / len(latencies), 3) if latencies else 0.0
+
+        return {
+            "mode": mode,
+            "collection": collection_name,
+            "total_questions": len(dataset),
+            "avg_latency_s": avg_lat,
+            "ragas_scores": ragas_scores,
+            "per_question": per_question,
+        }
+
+    # ------------------------------------------------------------------
+    # Ablation study
+    # ------------------------------------------------------------------
 
     def compare_baseline_vs_advanced(
-        self, 
+        self,
         collection_name: str,
-        dataset_path: str = None
+        dataset_path: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Ablation Study: Đo lường sức mạnh của từng lớp SOTA.
-        
-        Tách biệt và chạy đo lường từng giai đoạn để thấy % cải thiện cụ thể
-        khi lắp thêm tính năng mới vào RAG.
+        """Ablation Study 3 tầng: Naive → Hybrid → Advanced.
+
+        Đo lường mức độ cải thiện khi bổ sung từng lớp SOTA vào pipeline.
         """
-        logger.info("=" * 60)
-        logger.info("   ⚔️  ABLATION STUDY - ĐO LƯỜNG TỪNG LỚP SOTA")
-        logger.info("=" * 60)
-        
-        # Vòng 0: Naive RAG (Cốt lõi)
-        logger.info("\n🐢 TẦNG 0: NAIVE RAG (Chỉ Search bằng Vector thô)")
-        naive_report = self.evaluate_with_ragas(collection_name, dataset_path, mode="naive")
-        
-        # Vòng 1: Add Hybrid
-        logger.info("\n🛠️ TẦNG 1: HYBRID SEARCH (Kết hợp Vector + Keyword BM25)")
-        hybrid_report = self.evaluate_with_ragas(collection_name, dataset_path, mode="hybrid_only")
-        
-        # Vòng 2: Add Reranker
-        logger.info("\n🚀 TẦNG 2: RERANKER (Hybrid + Cross-Encoder Reranker)")
-        advanced_report = self.evaluate_with_ragas(collection_name, dataset_path, mode="advanced")
-        
-        # Tổng hợp So sánh
+        logger.info("\n" + "=" * 70)
+        logger.info("   ⚔️  ABLATION STUDY — ĐO LƯỜNG TỪNG LỚP SOTA")
+        logger.info("=" * 70)
+
+        logger.info("\n🐢 TẦNG 0: NAIVE RAG (Dense Search only)")
+        naive = self.evaluate(collection_name, "naive", dataset_path)
+
+        logger.info("\n🛠️  TẦNG 1: HYBRID SEARCH (Dense + BM25 RRF)")
+        hybrid = self.evaluate(collection_name, "hybrid", dataset_path)
+
+        logger.info("\n🚀 TẦNG 2: ADVANCED SOTA (Hybrid + Cross-Encoder Reranker)")
+        advanced = self.evaluate(collection_name, "advanced", dataset_path)
+
+        # Tính delta giữa các tầng
+        improvements: Dict[str, Any] = {}
+        core_metrics = [
+            "faithfulness", "answer_relevancy", "context_precision",
+            "context_recall", "factual_correctness",
+        ]
+        for metric in core_metrics:
+            n = naive["ragas_scores"].get(metric)
+            h = hybrid["ragas_scores"].get(metric)
+            a = advanced["ragas_scores"].get(metric)
+            if n is None or a is None:
+                continue
+            delta_total = round(a - n, 4)
+            delta_hybrid = round(h - n, 4) if h is not None else None
+            delta_rerank = round(a - h, 4) if h is not None else None
+            improvements[metric] = {
+                "naive": n,
+                "hybrid": h,
+                "advanced": a,
+                "delta_hybrid_vs_naive": delta_hybrid,
+                "delta_advanced_vs_hybrid": delta_rerank,
+                "delta_total": delta_total,
+                "improvement_pct": round((delta_total / max(abs(n), 0.001)) * 100, 2),
+            }
+
         comparison = {
-            "0_naive_baseline": naive_report,
-            "1_hybrid_only": hybrid_report,
-            "2_advanced_sota": advanced_report,
-            "improvements": {}
+            "generated_at": datetime.now().isoformat(),
+            "collection": collection_name,
+            "0_naive": naive,
+            "1_hybrid": hybrid,
+            "2_advanced": advanced,
+            "improvements": improvements,
         }
-        
-        # Tính delta cải thiện (Từ Naive lên Advanced để đánh giá toàn cục)
-        for metric in naive_report["ragas_scores"]:
-            naive_val = naive_report["ragas_scores"].get(metric, 0)
-            hyb_val = hybrid_report["ragas_scores"].get(metric, 0)
-            adv_val = advanced_report["ragas_scores"].get(metric, 0)
-            
-            if isinstance(naive_val, (int, float)) and isinstance(adv_val, (int, float)):
-                if naive_val > 0:
-                    comparison["improvements"][metric] = {
-                        "naive": naive_val,
-                        "hybrid": hyb_val,
-                        "advanced": adv_val,
-                        "delta_total": round(adv_val - naive_val, 4),
-                        "improvement_pct_total": round(((adv_val - naive_val) / max(naive_val, 0.001)) * 100, 2)
-                    }
-        
-        # In bảng báo cáo
-        self._print_comparison_report(comparison)
-        
-        # Xuất file báo cáo
-        report_path = os.path.join(os.getcwd(), "tests", "benchmark", "ragas_report.json")
-        with open(report_path, "w", encoding="utf-8") as f:
-            json.dump(comparison, f, ensure_ascii=False, indent=2)
-        logger.info(f"\n📄 Báo cáo đã lưu tại: {report_path}")
-        
+
+        self._print_report(comparison)
+        self._save_reports(comparison)
+
         return comparison
 
-    def _print_comparison_report(self, comparison: Dict):
-        """In bảng so sánh 3 lớp đẹp mắt ra Terminal."""
-        logger.info("\n" + "=" * 80)
-        logger.info("   📊 BÁO CÁO ABLATION STUDY: KIỂM CHỨNG TỪNG CẤP ĐỘ SOTA")
-        logger.info("=" * 80)
-        
-        naive = comparison["0_naive_baseline"]["ragas_scores"]
-        hybrid = comparison["1_hybrid_only"]["ragas_scores"]
-        advanced = comparison["2_advanced_sota"]["ragas_scores"]
-        
-        logger.info(f"   {'METRIC':<20} | {'Tầng 0: NAIVE':<15} | {'Tầng 1: HYBRID':<15} | {'Tầng 2: SOTA (Rerank)':<20} | Hiệu quả TỐNG%")
-        logger.info("-" * 80)
-        
-        for metric in naive:
-            n_val = naive.get(metric, 0)
-            h_val = hybrid.get(metric, 0)
-            a_val = advanced.get(metric, 0)
-            
-            if isinstance(n_val, (int, float)) and isinstance(a_val, (int, float)) and n_val >= 0:
-                delta = round(a_val - n_val, 4)
-                pct = round(((a_val - n_val) / max(n_val, 0.001)) * 100, 1)
-                arrow = "🟢 ↑" if delta > 0 else ("🔴 ↓" if delta < 0 else "⚪ →")
-                
-                logger.info(f"   {metric:<20} | {n_val:<15.4f} | {h_val:<15.4f} | {a_val:<20.4f} | {arrow} +{pct}%")
-        
-        logger.info("-" * 80)
+    # ------------------------------------------------------------------
+    # Reporting
+    # ------------------------------------------------------------------
+
+    def _print_report(self, comparison: Dict) -> None:
+        """In bảng so sánh 3 tầng ra terminal."""
+        naive_s = comparison["0_naive"]["ragas_scores"]
+        hybrid_s = comparison["1_hybrid"]["ragas_scores"]
+        adv_s = comparison["2_advanced"]["ragas_scores"]
+
+        col_w = 18
+        logger.info("\n" + "=" * 90)
+        logger.info("   📊 BÁO CÁO ABLATION STUDY — YouRAG RAGAS Evaluation")
+        logger.info("=" * 90)
+        header = (
+            f"   {'METRIC':<{col_w}} | {'NAIVE (Tầng 0)':<16} | "
+            f"{'HYBRID (Tầng 1)':<16} | {'ADVANCED (Tầng 2)':<18} | Δ Total"
+        )
+        logger.info(header)
+        logger.info("-" * 90)
+
+        core_metrics = [
+            "faithfulness", "answer_relevancy", "context_precision",
+            "context_recall", "factual_correctness",
+        ]
+        for metric in core_metrics:
+            n = naive_s.get(metric)
+            h = hybrid_s.get(metric)
+            a = adv_s.get(metric)
+            if n is None:
+                logger.info(f"   {metric:<{col_w}} | {'N/A':<16} | {'N/A':<16} | {'N/A':<18} | —")
+                continue
+
+            delta = round(a - n, 4) if a is not None else 0.0
+            pct = round((delta / max(abs(n), 0.001)) * 100, 1)
+            arrow = "🟢 ↑" if delta > 0.001 else ("🔴 ↓" if delta < -0.001 else "⚪ →")
+            sign = "+" if delta >= 0 else ""
+            n_str = f"{n:.4f}" if n is not None else "N/A"
+            h_str = f"{h:.4f}" if h is not None else "N/A"
+            a_str = f"{a:.4f}" if a is not None else "N/A"
+
+            logger.info(
+                f"   {metric:<{col_w}} | {n_str:<16} | {h_str:<16} | "
+                f"{a_str:<18} | {arrow} {sign}{pct}%"
+            )
+
+        logger.info("-" * 90)
+        n_lat = comparison["0_naive"]["avg_latency_s"]
+        h_lat = comparison["1_hybrid"]["avg_latency_s"]
+        a_lat = comparison["2_advanced"]["avg_latency_s"]
+        logger.info(
+            f"   {'Latency (s)':<{col_w}} | {n_lat:<16} | {h_lat:<16} | {a_lat:<18} |"
+        )
+        logger.info("=" * 90)
+
+    def _save_reports(self, comparison: Dict) -> None:
+        """Lưu báo cáo dạng JSON + Markdown."""
+        os.makedirs(_BENCHMARK_DIR, exist_ok=True)
+
+        # JSON
+        with open(_DEFAULT_REPORT_JSON, "w", encoding="utf-8") as f:
+            json.dump(comparison, f, ensure_ascii=False, indent=2, default=str)
+        logger.info(f"📄 JSON report: {_DEFAULT_REPORT_JSON}")
+
+        # Markdown
+        md = self._build_markdown_report(comparison)
+        with open(_DEFAULT_REPORT_MD, "w", encoding="utf-8") as f:
+            f.write(md)
+        logger.info(f"📝 Markdown report: {_DEFAULT_REPORT_MD}")
+
+    def _build_markdown_report(self, comparison: Dict) -> str:
+        """Tạo Markdown report cho GitHub / Notion."""
+        lines = [
+            "# YouRAG — RAGAS Evaluation Report",
+            "",
+            f"**Collection:** `{comparison['collection']}`  ",
+            f"**Generated:** {comparison['generated_at']}  ",
+            f"**Questions:** {comparison['0_naive']['total_questions']}",
+            "",
+            "## Ablation Study Results",
+            "",
+            "| Metric | Naive (Tầng 0) | Hybrid (Tầng 1) | Advanced (Tầng 2) | Δ Total | Improvement |",
+            "|--------|---------------|-----------------|-------------------|---------|-------------|",
+        ]
+
+        core_metrics = [
+            "faithfulness", "answer_relevancy", "context_precision",
+            "context_recall", "factual_correctness",
+        ]
+        improvements = comparison.get("improvements", {})
+        naive_s = comparison["0_naive"]["ragas_scores"]
+
+        for metric in core_metrics:
+            if metric in improvements:
+                imp = improvements[metric]
+                n = f"{imp['naive']:.4f}"
+                h = f"{imp['hybrid']:.4f}" if imp["hybrid"] is not None else "N/A"
+                a = f"{imp['advanced']:.4f}" if imp["advanced"] is not None else "N/A"
+                delta = imp["delta_total"]
+                pct = imp["improvement_pct"]
+                sign = "+" if delta >= 0 else ""
+                icon = "🟢" if delta > 0.001 else ("🔴" if delta < -0.001 else "⚪")
+                lines.append(
+                    f"| {metric} | {n} | {h} | {a} | {sign}{delta:.4f} | {icon} {sign}{pct}% |"
+                )
+            else:
+                n = naive_s.get(metric)
+                lines.append(
+                    f"| {metric} | {'N/A' if n is None else f'{n:.4f}'} | N/A | N/A | — | — |"
+                )
+
         # Latency
-        n_lat = comparison["0_naive_baseline"]["avg_latency_s"]
-        h_lat = comparison["1_hybrid_only"]["avg_latency_s"]
-        a_lat = comparison["2_advanced_sota"]["avg_latency_s"]
-        logger.info(f"   {'Latency (S)':<20} | {n_lat:<15} | {h_lat:<15} | {a_lat:<20} | (Nhanh -> Chậm)")
-        logger.info("=" * 80)
+        n_lat = comparison["0_naive"]["avg_latency_s"]
+        h_lat = comparison["1_hybrid"]["avg_latency_s"]
+        a_lat = comparison["2_advanced"]["avg_latency_s"]
+        lines += [
+            f"| **Latency (s)** | {n_lat} | {h_lat} | {a_lat} | — | — |",
+            "",
+            "## Metric Definitions",
+            "",
+            "| Metric | Mô tả |",
+            "|--------|-------|",
+            "| **Faithfulness** | Câu trả lời trung thành với context, không hallucinate |",
+            "| **Answer Relevancy** | Câu trả lời có liên quan đến câu hỏi không |",
+            "| **Context Precision** | Context truy xuất có chính xác, ít nhiễu không |",
+            "| **Context Recall** | Context có bao phủ đủ ground truth không |",
+            "| **Factual Correctness** | Câu trả lời đúng thực tế so với ground truth |",
+            "",
+            "---",
+            "*Evaluated with [RAGAS 0.4.x](https://docs.ragas.io) + Groq llama-3.1-8b-instant*",
+        ]
+        return "\n".join(lines)
+
+    # ------------------------------------------------------------------
+    # Legacy alias (backward compat với run_benchmark.py)
+    # ------------------------------------------------------------------
+
+    def evaluate_with_ragas(
+        self,
+        collection_name: str,
+        dataset_path: Optional[str] = None,
+        mode: str = "advanced",
+    ) -> Dict[str, Any]:
+        """Alias giữ backward compatibility với run_benchmark.py."""
+        return self.evaluate(collection_name, mode, dataset_path)
