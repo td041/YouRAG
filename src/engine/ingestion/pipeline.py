@@ -9,6 +9,7 @@ from src.engine.ingestion.graph_extractor import GraphExtractor
 from src.engine.ingestion.contextual_enricher import ContextualEnricher
 from src.core.database import db_instance
 from src.core.logger import logger
+from src.engine.retrieval.graph_rag import KnowledgeGraphBuilder
 
 # -------------------------------------------------------------------
 # 🧘 ZENML PIPELINE STEPS
@@ -143,7 +144,15 @@ def step_save_to_qdrantdb(raw_data: Dict[str, Any], final_chunks: List[Dict[str,
         collection_name=col_name,
         points=points
     )
-    
+
+    # Build Knowledge Graph ngay sau khi upsert xong
+    try:
+        builder = KnowledgeGraphBuilder()
+        builder.build_graph(col_name)
+        logger.info(f"🕸️ Knowledge Graph built for [{col_name}]")
+    except Exception as e:
+        logger.warning(f"⚠️ Knowledge Graph build failed (non-critical): {e}")
+
     return {
         "status": "success",
         "video_id": video_id,
