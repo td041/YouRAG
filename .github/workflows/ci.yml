@@ -43,5 +43,10 @@ jobs:
       - name: Security check (Bandit)
         run: poetry run pip install bandit && poetry run bandit -r src/ -ll
 
-      - name: Run Unit Tests and Coverage
-        run: poetry run pytest tests/unit/ -v --cov=src --cov-report=xml
+      - name: Run Unit Tests (Mocked)
+        run: poetry run pytest tests/unit/ -v
+
+      - name: Run Integration Tests (Real AI & DB)
+        env:
+          GROQ_API_KEY: ${{ secrets.CI_GITHUB_TEST }}
+        run: poetry run pytest tests/integration/ -v --cov=src --cov-report=xml
