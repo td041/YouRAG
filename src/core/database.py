@@ -21,12 +21,16 @@ class VectorDatabase:
         if cls._instance is None:
             cls._instance = super(VectorDatabase, cls).__new__(cls)
 
-            # 1. Khởi tạo Qdrant Client (Chạy Storage trên ổ cứng nội bộ)
-            db_path = os.path.abspath(settings.QDRANT_DB_PATH)
-            os.makedirs(db_path, exist_ok=True)
-            cls._client = QdrantClient(path=db_path)
-            
-            logger.info(f"⚡ Qdrant Local Engine khởi động tại: {db_path}")
+            # 1. Khởi tạo Qdrant Client (Hỗ trợ Local & Server Mode)
+            if settings.QDRANT_SERVER_URL:
+                api_key = settings.QDRANT_API_KEY.get_secret_value() if settings.QDRANT_API_KEY else None
+                cls._client = QdrantClient(url=settings.QDRANT_SERVER_URL, api_key=api_key)
+                logger.info(f"🌐 Qdrant Server Engine khởi động tại: {settings.QDRANT_SERVER_URL}")
+            else:
+                db_path = os.path.abspath(settings.QDRANT_DB_PATH)
+                os.makedirs(db_path, exist_ok=True)
+                cls._client = QdrantClient(path=db_path)
+                logger.info(f"⚡ Qdrant Local Engine khởi động tại: {db_path}")
 
             # 2. Tải Mô hình Vector
             device = settings.DEVICE if torch.cuda.is_available() else "cpu"
