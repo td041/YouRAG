@@ -1,84 +1,385 @@
-# YouRAG: Nền tảng Tìm kiếm Video YouTube & Tri thức Tích hợp AI (Advanced SOTA)
+<p align="center">
+  <img src="https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white" alt="Python"/>
+  <img src="https://img.shields.io/badge/FastAPI-0.110-009688?logo=fastapi&logoColor=white" alt="FastAPI"/>
+  <img src="https://img.shields.io/badge/Next.js-14-000000?logo=nextdotjs&logoColor=white" alt="Next.js"/>
+  <img src="https://img.shields.io/badge/LLM-Llama_3.3_70B-7C3AED?logo=meta&logoColor=white" alt="LLM"/>
+  <img src="https://img.shields.io/badge/Qdrant-Vector_DB-DC382D?logo=qdrant&logoColor=white" alt="Qdrant"/>
+  <img src="https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white" alt="Docker"/>
+  <img src="https://img.shields.io/badge/CI-GitHub_Actions-2088FF?logo=githubactions&logoColor=white" alt="CI"/>
+</p>
 
-**YouRAG** là một hệ thống RAG (Retrieval-Augmented Generation) hiện đại bậc nhất, lấy luồng đầu vào là các video YouTube, "hấp thụ" (ingest) thông tin kết hợp **Đồ thị tri thức (Knowledge Graph)** nhằm cung cấp khả năng hỏi đáp và phân tích sâu mức độ chuyên gia. 
+# 🧠 YouRAG — Advanced YouTube RAG with Knowledge Graph & Self-Correction
 
-Thay vì sử dụng RAG truyền thống (chặt văn bản và tìm kiếm thô), YouRAG áp dụng **Ablation-tested SOTA Pipeline**, từ Ingestion đến Evaluation, nhằm tối ưu hóa độ chính xác và loại bỏ triệt để tình trạng ảo giác (Hallucination) của AI.
+**YouRAG** là hệ thống **Retrieval-Augmented Generation (RAG)** thế hệ mới, biến bất kỳ video YouTube nào thành một nguồn tri thức có thể truy vấn và hỏi đáp bằng AI ở mức chuyên gia. Hệ thống kết hợp **Knowledge Graph**, **Hybrid Search**, **Cross-Encoder Reranking** và **Graph-based Self-Correction** — những kỹ thuật SOTA nhất trong lĩnh vực RAG hiện nay.
 
----
-
-## 🚀 Tính năng Cốt lõi (Advanced Core Features)
-
-### 1. 🏗️ MLOps & Ingestion (Hấp thụ và Đóng gói Kiến thức)
-- **ZenML Orchestration**: Luồng xử lý dữ liệu được quản trị hoàn toàn vòng đời bằng MLOps pipeline.
-- **Semantic Chunking & Contextual Enrichment**: Áp dụng kỹ thuật Anthropic, bơm thêm 1-2 câu ngữ cảnh gốc do LLM suy luận vào đầu mỗi Chunk để chống lại hiện tượng "Lost in the middle".
-- **LLM-based Graph Extraction**: Tự động sử dụng LLM để đọc, trích xuất bộ ba (Thực thể - Quan hệ - Đối tượng) từ video, dọn đường cho Graph RAG.
-
-### 2. 🔍 Retrieval (Tra cứu Thông minh màng lọc 3 lớp)
-- **Qdrant Vector Engine**: Thay thế hoàn toàn ChromaDB bằng Qdrant Local Engine (Rust-based) cực nhẹ và siêu tốc, dùng `BAAI/bge-m3` nhúng Vector.
-- **NetworkX Graph Traversal**: Kích hoạt **Graph RAG** tìm kiếm các liên kết ẩn (multi-hop reasoning) mà Vector Search bị mù.
-- **Hybrid Search + RRF**: Tìm kiếm kép kết hợp Vector (Ý nghĩa) và BM25 (Từ khóa), hòa trộn điểm bằng thuật toán Reciprocal Rank Fusion.
-- **Cross-Encoder Reranking**: Trạm kiểm soát `mmarco-mMiniLMv2` chấm điểm chéo độc lập để lọc rác cực đoan (Zero-noise) trước khi giao cho LLM.
-
-### 3. 🧠 Generation (Bộ não tự soát lỗi)
-- **Graph-based Self-Correction**: Tính năng SOTA đỉnh cao! AI bắt buộc phải đối chiếu bản nháp câu trả lời với "Graph Facts" (Sự thật đồ thị). Nếu phát hiện mâu thuẫn hoặc ảo giác, AI phải tự động sửa lỗi trước khi xuất ra cho người dùng.
-- **Dynamic PromptBuilder**: Hỗ trợ xuất định dạng linh hoạt: Tự động vẽ sơ đồ tư duy (Mindmap qua Mermaid) hoặc kẻ bảng So sánh (Markdown Tables).
-- **Streaming Response**: Gõ chữ mượt mà kết hợp trích dẫn mốc thời gian `[mm:ss]` (bấm để xem thẳng video Youtube).
-
-### 4. 🧪 Evaluation (Kiểm định Chất lượng)
-- **RAGAS Ablation Study**: Đường ống Benchmark tự động đo đạc sự tiến bộ của từng lớp SOTA (Naive → Hybrid → Reranker) qua 4 chỉ số vàng: *Faithfulness, Answer Relevancy, Context Precision, Context Recall*.
+> **Không chỉ là chatbot video.** YouRAG xây dựng một "bộ não kỹ thuật số" cho mỗi video: trích xuất thực thể, dựng đồ thị quan hệ, và bắt buộc AI phải đối chiếu sự thật trước khi trả lời — **loại bỏ ảo giác (hallucination) ở mức kiến trúc.**
 
 ---
 
-## 🛠 Cấu trúc Công nghệ (Tech Stack)
+## ⚡ Kiến trúc Hệ thống (System Architecture)
 
-| Lớp (Layer)            | Công nghệ sử dụng                    | Chức năng (Role)                             |
-| ---------------------- | ------------------------------------ | -------------------------------------------- |
-| **Orchestration**      | `ZenML`                              | Quản trị/Điều phối luồng Data Pipeline       |
-| **Core & Security**    | `Pydantic v2`                        | Quản lý cấu hình `SecretStr`, Singleton DB   |
-| **Vector DB**          | `Qdrant`                             | Máy chủ tìm kiếm Vector siêu tốc             |
-| **Graph DB**           | `NetworkX`                           | Lưu trữ và tính toán đường đi Đồ thị         |
-| **Embedding & Rerank** | `BAAI/bge-m3` & `mmarco-mMiniLMv2`   | Mô hình nhúng Vector và chấm điểm nhiễu      |
-| **Evaluation**         | `RAGAS Framework`                    | LLM-as-a-judge chấm điểm tự động             |
-| **LLM Provider**       | `llama-3.3-70b` (qua Groq API)       | Trái tim tạo ngôn ngữ và tự soát lỗi (Self-RAG)|
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                          🎬 YOUTUBE VIDEO URL                              │
+└────────────────────────────────┬─────────────────────────────────────────────┘
+                                 │
+                    ┌────────────▼────────────┐
+                    │   YouTubeLoader          │  pytubefix + youtube-transcript-api
+                    │   (Parallel Fetch)       │  Tải metadata + transcript song song
+                    └────────────┬─────────────┘
+                                 │
+            ┌────────────────────▼────────────────────┐
+            │       SemanticChunker (SOTA 2-Phase)     │
+            │                                          │
+            │  Phase 1: Pause-Aware Atomic Splitting   │  Gộp dòng transcript → câu hoàn chỉnh
+            │           (Pause > 1.5s = ngắt topic)    │  dựa trên khoảng lặng người nói
+            │                                          │
+            │  Phase 2: Vector Semantic Grouping       │  Nhúng vector (all-MiniLM-L6-v2)
+            │           Dynamic Percentile Threshold   │  Dò "thung lũng ngữ nghĩa" để cắt chunk
+            └────────────┬─────────────────────────────┘
+                         │
+         ┌───────────────┼───────────────┐
+         ▼                               ▼
+┌──────────────────┐          ┌─────────────────────────┐
+│ ContextualEnricher│          │   GraphExtractor         │
+│ (Anthropic Tech)  │          │   (Rule-based NER)       │
+│                   │          │                           │
+│ LLM bơm 1-2 câu  │          │ Trích xuất Entity +       │
+│ ngữ cảnh gốc vào │          │ Relation → NetworkX Graph │
+│ đầu mỗi chunk    │          │                           │
+└────────┬──────────┘          └──────────┬────────────────┘
+         │                                │
+         └────────────┬───────────────────┘
+                      ▼
+         ┌─────────────────────────┐         ┌──────────────────┐
+         │   Qdrant Vector DB       │         │  NetworkX Graph   │
+         │   BAAI/bge-m3 (1024-dim) │         │  Knowledge Graph  │
+         │   Cosine HNSW Index      │         │  (.gpickle)       │
+         └─────────────────────────┘         └──────────────────┘
+                      │                                │
+═══════════════════════════════════════════════════════════════════
+                      │         🔍 QUERY TIME          │
+                      ▼                                ▼
+         ┌─────────────────────┐          ┌──────────────────────┐
+         │   HybridRetriever    │          │   GraphRetriever      │
+         │                      │          │                       │
+         │  Dense (Qdrant)      │          │  Multi-hop Traversal  │
+         │  + Sparse (BM25)     │          │  Entity Extraction    │
+         │  → RRF Fusion        │          │  Subgraph Matching    │
+         │    (α=0.5, k=60)     │          │                       │
+         └──────────┬───────────┘          └───────────┬───────────┘
+                    │                                  │
+                    ▼                                  │
+         ┌─────────────────────┐                       │
+         │ CrossEncoderReranker │                       │
+         │ mmarco-mMiniLMv2     │                       │
+         │ (Logit Scoring)      │                       │
+         └──────────┬───────────┘                       │
+                    │                                   │
+                    └──────────────┬────────────────────┘
+                                   ▼
+                    ┌──────────────────────────────┐
+                    │     AnswerGenerator           │
+                    │                               │
+                    │  1. PromptBuilder → LLM Call   │  Llama-3.3-70B (Groq)
+                    │  2. Draft Answer              │
+                    │  3. 🔄 Self-Correction:       │  So sánh draft vs Graph Facts
+                    │     AI audit + auto-fix        │  Phát hiện mâu thuẫn → sửa lỗi
+                    │  4. Final Answer + [mm:ss]     │  Trích dẫn mốc thời gian
+                    └──────────────────────────────┘
+```
 
 ---
 
-## ⚙ Thiết Lập Hệ Thống
+## 🔥 Điểm nhấn Kỹ thuật (Technical Highlights)
 
-**1. Clone mã nguồn và Cài đặt Environment**
+### 🧬 Semantic Chunking — Không còn cắt văn bản "bừa bãi"
+Thay vì cắt theo số ký tự cố định (naive chunking), YouRAG sử dụng thuật toán **2 giai đoạn**:
+1. **Pause-Aware Splitting**: Phân tích khoảng lặng giữa các dòng transcript (>1.5s = chuyển topic). Kết hợp LLM để phục hồi dấu câu cho transcript thô.
+2. **Vector Semantic Valleys**: Nhúng vector từng câu, tính cosine similarity giữa các câu liền kề, sử dụng **Dynamic Percentile Threshold** (top 15% điểm rớt mạnh nhất) để xác định điểm cắt. Ngưỡng này **tự co giãn theo từng video**, không hardcode.
+
+### 🕸️ Knowledge Graph RAG — Vượt xa Vector Search
+Vector search chỉ tìm được "đoạn văn giống nhau". **Graph RAG** tìm được **quan hệ ẩn** mà vector bị mù:
+- Trích xuất bộ ba `(Entity → Relation → Entity)` từ mỗi chunk
+- Xây dựng đồ thị tri thức bằng **NetworkX**
+- Hỗ trợ **multi-hop reasoning**: "A liên quan B, B liên quan C → A liên quan C"
+- Cung cấp **Graph Facts** làm bằng chứng cho bước Self-Correction
+
+### 🔍 Hybrid Search + Reciprocal Rank Fusion (RRF)
+Kết hợp 2 paradigm tìm kiếm:
+| Engine | Vai trò | Ưu điểm |
+|--------|---------|---------|
+| **Dense** (Qdrant + bge-m3) | Tìm theo ý nghĩa ngữ nghĩa | Hiểu đồng nghĩa, paraphrase |
+| **Sparse** (BM25) | Tìm theo từ khóa chính xác | Bắt tên riêng, số liệu, thuật ngữ |
+
+Hai nguồn kết quả được hòa trộn bằng thuật toán **RRF** (`α=0.5, k=60`) — công bằng, không thiên vị engine nào.
+
+### ⚖️ Cross-Encoder Reranking — Bộ lọc chất lượng cuối cùng
+Sau Hybrid Search, các ứng viên được chấm điểm lại bằng **mmarco-mMiniLMv2** (Cross-Encoder đa ngôn ngữ). Khác với Bi-Encoder (so khoảng cách vector), Cross-Encoder cho Query+Document vào model **cùng lúc** → điểm đánh giá chính xác tuyệt đối, loại bỏ nhiễu triệt để.
+
+### 🧠 Graph-based Self-Correction — AI tự kiểm tra bản thân
+Đây là tính năng **SOTA đỉnh cao** của YouRAG:
+1. LLM tạo **bản nháp** câu trả lời
+2. Hệ thống so sánh bản nháp với **Graph Facts** (sự thật từ đồ thị tri thức)
+3. Nếu phát hiện **mâu thuẫn hoặc ảo giác** → LLM được gọi lần 2 để **tự sửa lỗi**
+4. Chỉ trả về câu trả lời đã qua kiểm toán
+
+> *"AI không chỉ trả lời — AI còn phải chứng minh câu trả lời không sai."*
+
+### 💬 Persistent Chat History — Kiến trúc 2 tầng
+Lịch sử trò chuyện được quản lý bằng kiến trúc **dual-layer**:
+| Tầng | Công nghệ | Vai trò |
+|------|-----------|---------|
+| **Speed Layer** | Redis | Cache tốc độ cao, TTL 24h |
+| **Durability Layer** | PostgreSQL | Lưu trữ vĩnh viễn, fallback khi Redis gặp sự cố |
+
+Hệ thống tự động **backfill** cache Redis từ PostgreSQL khi xảy ra cache miss.
+
+---
+
+## 🛠️ Tech Stack
+
+| Layer | Technology | Role |
+|-------|-----------|------|
+| **Backend API** | FastAPI 0.110 + Uvicorn | RESTful API + Streaming Response |
+| **Frontend** | Next.js 14 (React + TypeScript + Tailwind) | Glassmorphism UI, Dark Mode |
+| **Vector DB** | Qdrant (Rust-based, HNSW) | Tìm kiếm vector siêu tốc |
+| **Graph DB** | NetworkX | Đồ thị tri thức in-memory |
+| **Relational DB** | PostgreSQL 15 | Chat history persistence |
+| **Cache** | Redis 7 | Session cache, semantic cache |
+| **Embedding** | `BAAI/bge-m3` (1024-dim, multilingual) | Nhúng vector đa ngôn ngữ |
+| **Chunking Embed** | `all-MiniLM-L6-v2` | Semantic valley detection |
+| **Reranker** | `mmarco-mMiniLMv2-L12-H384-v1` | Cross-encoder chấm điểm chéo |
+| **LLM (Main)** | `llama-3.3-70b-versatile` via Groq | Generation + Self-Correction |
+| **LLM (Fast)** | `llama-3.1-8b-instant` via Groq | Contextual Enrichment |
+| **LLM (Fallback)** | OpenAI / Ollama | Dự phòng khi Groq không khả dụng |
+| **MLOps** | ZenML | Pipeline orchestration + checkpointing |
+| **Evaluation** | RAGAS Framework | LLM-as-a-judge benchmark |
+| **CI/CD** | GitHub Actions | Lint (Ruff) + Security (Bandit) + Tests |
+| **Containerization** | Docker Compose + BuildKit | Multi-service orchestration |
+| **Dependency Mgmt** | Poetry | Deterministic builds via lockfile |
+
+---
+
+## 🏗️ Cấu trúc Dự án
+
+```
+YouRAG/
+├── src/
+│   ├── api/
+│   │   └── main.py                    # FastAPI endpoints + AIStore startup
+│   ├── core/
+│   │   ├── config.py                  # Pydantic Settings (SecretStr, Singleton)
+│   │   ├── database.py                # VectorDatabase singleton (Qdrant + bge-m3)
+│   │   ├── postgres.py                # PostgreSQL engine + retry init
+│   │   ├── logger.py                  # Centralized logging
+│   │   └── utils.py                   # format_timestamp() utility
+│   ├── engine/
+│   │   ├── ingestion/
+│   │   │   ├── pipeline.py            # ZenML pipeline + IngestionPipeline wrapper
+│   │   │   ├── youtube_loader.py      # Parallel fetch (pytubefix + transcript API)
+│   │   │   ├── chunker.py             # SemanticChunker (2-phase SOTA)
+│   │   │   ├── contextual_enricher.py # Anthropic contextual retrieval technique
+│   │   │   └── graph_extractor.py     # Rule-based entity/relation extraction
+│   │   ├── retrieval/
+│   │   │   ├── hybrid_search.py       # HybridRetriever (RRF fusion)
+│   │   │   ├── dense_search.py        # DenseRetriever (Qdrant vector search)
+│   │   │   ├── sparse_search.py       # SparseRetriever (BM25 in-memory)
+│   │   │   └── graph_rag.py           # KnowledgeGraphBuilder + GraphRetriever
+│   │   ├── generation/
+│   │   │   ├── answer_generator.py    # AnswerGenerator (Self-Correction RAG)
+│   │   │   ├── llm_client.py          # Multi-provider LLM (Groq/OpenAI/Ollama)
+│   │   │   ├── prompt_builder.py      # Dynamic prompt (Standard/Mindmap/Table)
+│   │   │   └── summarizer.py          # VideoSummarizer (full video summary)
+│   │   ├── ranking/
+│   │   │   └── cross_encoder.py       # CrossEncoderReranker (mmarco-mMiniLMv2)
+│   │   └── chat/
+│   │       └── history.py             # Dual-layer chat history (Redis + Postgres)
+│   ├── models/
+│   │   └── chat.py                    # SQLModel schemas (ChatSession, ChatMessage)
+│   ├── schema/
+│   │   └── models.py                  # Pydantic API models
+│   └── cache/
+│       └── semantic_cache.py          # SemanticCache (vector-based dedup)
+├── frontend/                          # Next.js 14 UI
+│   ├── app/                           # App Router (page.tsx, layout.tsx)
+│   ├── components/                    # ChatPanel, VideoPanel, Sidebar
+│   └── lib/                           # API client, types
+├── tests/
+│   ├── unit/                          # 14 test files, all mocked, CI-safe
+│   ├── integration/                   # Real AI + DB tests (requires API keys)
+│   └── benchmark/                     # RAGAS ablation study
+├── .github/workflows/
+│   ├── ci.yml                         # Lint + Security + Unit Tests + Integration
+│   └── benchmark.yml                  # RAGAS evaluation pipeline
+├── docker-compose.yml                 # 5 services: backend, frontend, qdrant, postgres, redis
+├── Dockerfile                         # Poetry-based, layer-cached, GPU-ready
+├── Makefile                           # 15+ shortcuts (build, up, rebuild, logs, test...)
+├── pyproject.toml                     # Poetry dependencies + Ruff + Pytest config
+└── poetry.lock                        # Deterministic dependency resolution
+```
+
+---
+
+## 🚀 Khởi chạy Nhanh
+
+### Yêu cầu
+- Docker + Docker Compose
+- NVIDIA GPU (khuyến nghị) hoặc CPU
+- Groq API Key ([Lấy miễn phí tại đây](https://console.groq.com))
+
+### 1. Clone & Cấu hình
+
 ```bash
-poetry install
+git clone https://github.com/td041/YouRAG.git
+cd YouRAG
+make setup   # Tạo file .env từ template
 ```
 
-**2. Cấu hình Biến Môi trường (.env)**
+Mở file `.env` và điền API key:
 ```env
-# SECRETS
-GROQ_API_KEY="gsk_xxxxx"
-
-# SYSTEM DIALS
-DEVICE="cuda" # hoặc "cpu"
-LOG_LEVEL="INFO"
+GROQ_API_KEY=gsk_xxxxx
 ```
 
-**3. Khởi chạy Hệ Sinh Thái Benchmark (Kiểm chứng SOTA)**
+### 2. Khởi chạy Hệ thống
+
+```bash
+make rebuild   # Build + Start tất cả 5 services
+```
+
+### 3. Truy cập
+
+| Service | URL | Mô tả |
+|---------|-----|--------|
+| **Frontend** | http://localhost:3000 | Giao diện chat |
+| **Backend API** | http://localhost:8000 | REST API |
+| **API Docs** | http://localhost:8000/docs | Swagger UI |
+
+---
+
+## 📋 Makefile Commands
+
+```bash
+make help           # Xem tất cả lệnh
+make setup          # Tạo .env từ template
+make build          # Build Docker images
+make up             # Khởi chạy (background)
+make down           # Dừng hệ thống
+make rebuild        # Down → Build (cached) → Up
+make rebuild-fresh  # Down → Build (no-cache) → Up
+make logs           # Xem logs tất cả services
+make logs-backend   # Xem logs backend
+make status         # Trạng thái containers + GPU
+make shell-backend  # SSH vào container backend
+make shell-db       # Vào PostgreSQL CLI
+make test           # Chạy unit tests
+make lint           # Kiểm tra code (Ruff)
+make clean          # Xóa containers
+make clean-all      # Xóa tất cả kể cả data ⚠️
+```
+
+---
+
+## 🧪 Testing & Quality
+
+### Unit Tests (14 files, ~60% coverage)
+```bash
+poetry run pytest tests/unit/ -v --cov=src --cov-report=term-missing
+```
+- Tất cả external I/O được mock (Qdrant, Redis, Postgres, LLM APIs)
+- Chạy trong < 2 giây, CI-safe
+
+### Integration Tests
+```bash
+poetry run pytest tests/integration/ -v
+```
+- Yêu cầu Groq API key và Docker services đang chạy
+
+### Code Quality
+```bash
+poetry run ruff check src/ tests/    # Lint
+poetry run bandit -r src/ -ll        # Security scan
+poetry run mypy src/ --ignore-missing-imports  # Type check
+```
+
+### RAGAS Benchmark (Ablation Study)
 ```bash
 poetry run python tests/run_benchmark.py --evaluate
 ```
+Đo lường 4 chỉ số vàng qua từng tầng SOTA:
+
+| Metric | Naive RAG | + Hybrid | + Reranker | + Self-Correction |
+|--------|-----------|----------|------------|-------------------|
+| **Faithfulness** | Baseline | ↑ | ↑↑ | ↑↑↑ |
+| **Answer Relevancy** | Baseline | ↑ | ↑↑ | ↑↑↑ |
+| **Context Precision** | Baseline | ↑↑ | ↑↑↑ | ↑↑↑ |
+| **Context Recall** | Baseline | ↑ | ↑↑ | ↑↑ |
 
 ---
 
-## ✅ GAP TO PURE PRODUCTION (Những gì cần làm tiếp theo)
-Hệ thống hiện tại đã đạt cấu trúc lõi rất mạnh, tuy nhiên để thực sự **"Production-ready"** và chịu tải cho ngàn User, dự án cần triển khai các hệ thống sau:
+## 🐳 Docker Architecture
 
-1. **Semantic Caching (Redis/GPTCache)**:
-   - *Vấn đề:* Gọi LLM cho các câu hỏi trùng lặp rất tốn kém và chậm.
-   - *Giải pháp:* Lắp bộ nhớ đệm Vector. Nếu câu hỏi mới trùng 95% ý nghĩa với câu hỏi cũ, móc ngay câu trả lời trong Cache ra (độ trễ 0.1s, chi phí $0).
-2. **Semantic Router & API (FastAPI)**:
-   - Dựng máy chủ RESTful API. Áp dụng Semantic Router để phân loại câu hỏi (Ví dụ: Hỏi thời tiết -> Chặn; Hỏi đếm số lượng -> Chuyển thẳng về Graph DB không qua Vector DB).
-3. **Frontend Application (Streamlit/Next.js)**:
-   - Xây dựng Web UI có chế độ Darkmode/Glassmorphism. Hiển thị trực quan Mindmap Mermaid bằng React component.
-4. **Containerization & CI/CD (Docker + GitHub Actions)**:
-   - Cần đóng hộp (Dockerize) toàn bộ App, Qdrant và Redis vào `docker-compose.yml`.
-   - Thiết lập GitHub Actions tự động Lint code (`ruff`), test RAGAS, và đẩy Image lên GHCR mỗi khi có Push.
-5. **Observability (Phoenix/LangSmith)**:
-   - Tích hợp công cụ đo vết (Tracing) để xem mỗi câu trả lời ngốn bao nhiêu Token và tốn bao nhiêu giây ở từng bước.
+```yaml
+# 5 services, 1 network, GPU-ready
+services:
+  qdrant       # Vector DB (port 6333)
+  postgres     # Chat history (port 5432)
+  redis        # Session cache (port 6379)
+  backend      # FastAPI + AI Models (port 8000, GPU)
+  frontend     # Next.js UI (port 3000)
+```
+
+### Tối ưu hóa Docker
+- **Layer Caching**: Dependencies được cài trước source code → rebuild chỉ mất ~5s khi chỉ sửa code
+- **Model Caching**: Mount `~/.cache/huggingface` từ host → không tải lại ~4.8GB models mỗi lần start
+- **Poetry-based**: Sử dụng `poetry.lock` để đảm bảo reproducible builds
+- **BuildKit**: Bật `DOCKER_BUILDKIT=1` để build song song
+
+---
+
+## 🔌 API Endpoints
+
+| Method | Endpoint | Mô tả |
+|--------|----------|--------|
+| `GET` | `/` | Health check |
+| `GET` | `/collections` | Danh sách video đã ingest |
+| `POST` | `/ingest` | Ingest video YouTube mới |
+| `POST` | `/chat` | Chat RAG (sync) |
+| `POST` | `/chat/stream` | Chat RAG (streaming) |
+| `GET` | `/history/{session_id}` | Lấy lịch sử chat |
+| `POST` | `/graph/build/{collection}` | Build/Rebuild Knowledge Graph |
+| `GET` | `/summarize/{collection}` | Tóm tắt video |
+| `GET` | `/summarize/stream/{collection}` | Tóm tắt video (streaming) |
+
+---
+
+## 🗺️ Roadmap
+
+- [x] Semantic Chunking (Pause-aware + Vector valleys)
+- [x] Contextual Enrichment (Anthropic technique)
+- [x] Knowledge Graph (NetworkX + Rule-based NER)
+- [x] Hybrid Search (Dense + BM25 + RRF)
+- [x] Cross-Encoder Reranking (mmarco-mMiniLMv2)
+- [x] Graph-based Self-Correction
+- [x] Streaming Response + [mm:ss] Citations
+- [x] Persistent Chat History (Redis + PostgreSQL)
+- [x] Next.js Frontend (Glassmorphism, Dark Mode)
+- [x] Docker Compose (5 services, GPU-ready)
+- [x] CI/CD (GitHub Actions: Lint + Security + Tests)
+- [x] RAGAS Ablation Benchmark
+- [ ] Semantic Caching (GPTCache/Redis Vector)
+- [ ] Semantic Router (Intent classification)
+- [ ] Observability (Phoenix/LangSmith tracing)
+- [ ] Multi-video cross-referencing
+
+---
+
+## 📄 License
+
+MIT License — Free to use, modify, and distribute.
+
+---
+
+<p align="center">
+  <b>Built with 🔥 by <a href="https://github.com/td041">td041</a></b>
+</p>
