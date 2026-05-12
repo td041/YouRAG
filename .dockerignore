@@ -1,0 +1,23 @@
+# ── Loại trừ để giảm build context (không copy vào Docker image) ────────────
+.git
+.github
+.pytest_cache
+.ruff_cache
+.venv
+.cache
+
+# Model cache — KHÔNG bake vào image, dùng volume mount từ host
+# Xem docker-compose.yml: volumes ~/.cache/huggingface
+~/.cache
+
+# Dữ liệu runtime — không cần trong image
+qdrant_db/
+graph_store/
+tests/benchmark/
+
+# Dev files
+*.log
+*.tmp
+node_modules/
+__pycache__/
+*.pyc

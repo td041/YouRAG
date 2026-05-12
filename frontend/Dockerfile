@@ -1,34 +1,31 @@
+# ── Stage 1: Builder ──────────────────────────────────────────────
 FROM node:20-alpine AS builder
-
 WORKDIR /app
-
-# Copy package files
 COPY package*.json ./
-
-# Install dependencies (sử dụng npm ci để cài đặt chính xác các versions)
 RUN npm ci
-
-# Copy toàn bộ mã nguồn frontend
 COPY . .
-
-# Build Next.js
 RUN npm run build
 
-# Runner stage
+# ── Stage 2: Runner ──────────────────────────────────────────────
 FROM node:20-alpine AS runner
-
 WORKDIR /app
 
 ENV NODE_ENV production
+ENV NEXT_TELEMETRY_DISABLED 1
 
-# Copy thư mục build và node_modules từ stage trước
+RUN addgroup --system --gid 1001 nodejs
+RUN adduser --system --uid 1001 nextjs
+
+# Copy toàn bộ nội dung của standalone vào thư mục hiện tại
+COPY --from=builder /app/.next/standalone ./
+# Copy static và public vào ĐÚNG vị trí mà standalone server yêu cầu
+COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/public ./public
-COPY --from=builder /app/.next ./.next
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/package.json ./package.json
+
+USER nextjs
 
 EXPOSE 3000
-
 ENV PORT 3000
 
-CMD ["npm", "start"]
+# Chạy server.js từ thư mục standalone
+CMD ["node", "server.js"]

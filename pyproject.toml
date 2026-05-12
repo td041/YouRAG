@@ -24,9 +24,16 @@ openai = "1.14.2"
 rank-bm25 = "0.2.2"
 sentence-transformers = "2.6.1"
 httpx = "<0.28.0"
-zenml = {extras = ["server"], version = "^0.94.0"}
 qdrant-client = "^1.17.1"
 fastembed = "^0.7.4"
+sqlmodel = "^0.0.18"
+sqlalchemy = "^2.0.0"
+psycopg2-binary = "^2.9.9"
+langchain = "^0.2.0"
+langchain-community = "^0.2.0"
+
+[tool.poetry.group.evaluation.dependencies]
+zenml = {extras = ["server"], version = "^0.94.0"}
 ragas = "^0.4.3"
 
 [tool.poetry.group.dev.dependencies]

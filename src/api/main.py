@@ -2,8 +2,10 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from typing import Optional
 import os
 import sys
+import uuid
 
 # Đảm bảo import được module từ thư mục gốc
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
@@ -15,6 +17,8 @@ from src.engine.retrieval.graph_rag import GraphRetriever, KnowledgeGraphBuilder
 from src.engine.ranking.cross_encoder import CrossEncoderReranker
 from src.engine.generation.answer_generator import AnswerGenerator
 from src.engine.generation.summarizer import VideoSummarizer
+from src.engine.chat.history import ChatHistoryManager
+from src.core.postgres import init_db
 from src.core.logger import setup_logger
 
 logger = setup_logger("YouRAG_API")
@@ -41,6 +45,7 @@ class AIStore:
 @app.on_event("startup")
 async def startup_event():
     logger.info("🚀 Đang khởi động Backend YouRAG...")
+    init_db()
     AIStore.pipeline = IngestionPipeline()
     AIStore.reranker = CrossEncoderReranker()
     AIStore.generator = AnswerGenerator()
@@ -58,6 +63,7 @@ class IngestRequest(BaseModel):
 class ChatRequest(BaseModel):
     query: str
     collection: str
+    session_id: Optional[str] = None
 
 # ─────────────────────────────────────────────
 # ENDPOINTS
@@ -124,12 +130,17 @@ async def build_graph(collection: str):
 @app.post("/chat")
 async def chat_rag(req: ChatRequest):
     try:
+        session_id = req.session_id or str(uuid.uuid4())
+        history_mgr = ChatHistoryManager(session_id=session_id, collection_name=req.collection)
+        history_mgr.add_message(role="user", content=req.query)
+        chat_history_str = history_mgr.format_for_prompt()
+
         # 1. Hybrid Search
         hybrid = HybridRetriever(top_k=10)
         candidates = hybrid.search(req.query, collection_name=req.collection)
 
         if not candidates:
-            return {"answer": "Không tìm thấy thông tin phù hợp trong video này.", "sources": [], "facts": []}
+            return {"answer": "Không tìm thấy thông tin phù hợp trong video này.", "sources": [], "facts": [], "session_id": session_id}
 
         # 2. Graph RAG Search (lấy graph_data thật)
         graph_data = AIStore.graph_retriever.search(req.query, collection_name=req.collection)
@@ -146,8 +157,11 @@ async def chat_rag(req: ChatRequest):
             retrieved_chunks=final_chunks,
             global_summary=global_summary,
             graph_facts=graph_data.get("facts", []),
-            graph_summary=graph_data.get("graph_summary", "")
+            graph_summary=graph_data.get("graph_summary", ""),
+            chat_history=chat_history_str
         )
+
+        history_mgr.add_message(role="assistant", content=answer)
 
         from src.core.utils import format_timestamp
         sources = [
@@ -160,7 +174,17 @@ async def chat_rag(req: ChatRequest):
             "sources": sources,
             "facts": graph_data.get("facts", []),
             "graph_entities": graph_data.get("entities", []),
+            "session_id": session_id
         }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/history/{session_id}")
+async def get_chat_history(session_id: str, collection: str):
+    """Lấy lịch sử chat của một phiên để hiển thị lên UI khi load lại trang"""
+    try:
+        history_mgr = ChatHistoryManager(session_id=session_id, collection_name=collection)
+        return history_mgr.get_history(limit=20)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -168,6 +192,11 @@ async def chat_rag(req: ChatRequest):
 async def chat_rag_stream(req: ChatRequest):
     """Endpoint trả về Streaming Response với Global Context."""
     try:
+        session_id = req.session_id or str(uuid.uuid4())
+        history_mgr = ChatHistoryManager(session_id=session_id, collection_name=req.collection)
+        history_mgr.add_message(role="user", content=req.query)
+        chat_history_str = history_mgr.format_for_prompt()
+
         # 1. Hybrid Search
         hybrid = HybridRetriever(top_k=10)
         candidates = hybrid.search(req.query, collection_name=req.collection)
@@ -188,14 +217,20 @@ async def chat_rag_stream(req: ChatRequest):
 
         # 5. Streaming Generator
         def response_generator():
+            full_response = ""
             for chunk in AIStore.generator.generate_stream(
                 query=req.query,
                 retrieved_chunks=final_chunks,
                 global_summary=global_summary,
                 graph_facts=graph_data.get("facts", []),
-                graph_summary=graph_data.get("graph_summary", "")
+                graph_summary=graph_data.get("graph_summary", ""),
+                chat_history=chat_history_str
             ):
+                full_response += chunk
                 yield chunk
+            
+            # Lưu lại tin nhắn AI sau khi stream xong
+            history_mgr.add_message(role="assistant", content=full_response)
 
             from src.core.utils import format_timestamp
             sources = [
@@ -206,6 +241,8 @@ async def chat_rag_stream(req: ChatRequest):
 
             if graph_data.get("facts"):
                 yield f"\n\n__FACTS__::{'|'.join(graph_data['facts'])}"
+            
+            yield f"\n\n__SESSION__::{session_id}"
 
         return StreamingResponse(response_generator(), media_type="text/plain")
     except Exception as e:

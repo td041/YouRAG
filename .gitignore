@@ -56,7 +56,7 @@ graph_store/*.pickle
 *.safetensors               # HuggingFace safe format
 *.onnx                       # ONNX export
 *.h5                         # Keras / TF weights
-models/
+/models/
 model_cache/
 .cache/                      # HuggingFace / sentence-transformers cache
 
@@ -95,6 +95,7 @@ logs/
 *.log
 *.log.*
 *.out
+build_log.txt
 
 # ================================================
 # DOCKER

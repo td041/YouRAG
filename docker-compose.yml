@@ -1,4 +1,3 @@
-version: '3.8'
 
 services:
   qdrant:
@@ -12,32 +11,42 @@ services:
     networks:
       - yourag_network
 
-  # ── Bật lên khi cần tích hợp lịch sử chat (Chat History) ──────────────────
-  # postgres:
-  #   image: postgres:15-alpine
-  #   container_name: yourag-postgres
-  #   ports:
-  #     - "5432:5432"
-  #   environment:
-  #     - POSTGRES_USER=yourag_user
-  #     - POSTGRES_PASSWORD=yourag_pass
-  #     - POSTGRES_DB=yourag_db
-  #   volumes:
-  #     - postgres_data:/var/lib/postgresql/data
-  #   restart: unless-stopped
-  #   networks:
-  #     - yourag_network
+  # ── Tích hợp lịch sử chat (Chat History) ──────────────────────────────
+  postgres:
+    image: postgres:15-alpine
+    container_name: yourag-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=yourag_user
+      - POSTGRES_PASSWORD=yourag_pass
+      - POSTGRES_DB=yourag_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    networks:
+      - yourag_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U yourag_user -d yourag_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
-  # redis:
-  #   image: redis:7-alpine
-  #   container_name: yourag-redis
-  #   ports:
-  #     - "6379:6379"
-  #   volumes:
-  #     - redis_data:/data
-  #   restart: unless-stopped
-  #   networks:
-  #     - yourag_network
+  redis:
+    image: redis:7-alpine
+    container_name: yourag-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    networks:
+      - yourag_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
   # ──────────────────────────────────────────────────────────────────────────
 
   backend:
@@ -49,17 +58,30 @@ services:
       - "8000:8000"
     volumes:
       - ./src:/app/src
+      # Mount model cache từ máy host — không cần tải lại 4.8GB mỗi lần
+      - ~/.cache/huggingface:/root/.cache/huggingface
+      - ~/.cache/torch:/root/.cache/torch
     environment:
       - QDRANT_SERVER_URL=http://qdrant:6333
-      - GROQ_API_KEY=${GROQ_API_KEY:-your_groq_api_key_here}
-      - DEVICE=cpu
-      # ── Bật lên khi postgres và redis được kích hoạt ──────────────────────
-      # - REDIS_URL=redis://redis:6379/0
-      # - DATABASE_URL=postgresql://yourag_user:yourag_pass@postgres:5432/yourag_db
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - DEVICE=cuda
+      # ── Cấu hình kết nối cho Chat History ────────────────────────────────
+      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=postgresql://yourag_user:yourag_pass@postgres:5432/yourag_db
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     depends_on:
-      - qdrant
-      # - postgres
-      # - redis
+      qdrant:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     restart: unless-stopped
     networks:
       - yourag_network
@@ -72,7 +94,7 @@ services:
     ports:
       - "3000:3000"
     environment:
-      # Lưu ý: Frontend gọi API từ trình duyệt nên dùng localhost thay vì http://backend
+      # URL Backend mà Client Browser sẽ gọi tới
       - NEXT_PUBLIC_API_URL=http://localhost:8000
     depends_on:
       - backend
@@ -82,8 +104,8 @@ services:
 
 volumes:
   qdrant_data:
-  # postgres_data:
-  # redis_data:
+  postgres_data:
+  redis_data:
 
 networks:
   yourag_network:

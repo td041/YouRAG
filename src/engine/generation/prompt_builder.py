@@ -28,7 +28,8 @@ class PromptBuilder:
         context_str: str, 
         global_summary: Optional[str] = None, 
         graph_facts: Optional[List[str]] = None,
-        graph_summary: Optional[str] = None
+        graph_summary: Optional[str] = None,
+        chat_history: str = ""
     ) -> str:
         """Lắp ghép các thành phần dữ liệu thành User Prompt hoàn chỉnh."""
         
@@ -42,6 +43,7 @@ class PromptBuilder:
         return f"""
 Câu hỏi từ người dùng: "{query}"
 
+{chat_history}
 {summary_info}
 {graph_info}
 {facts_str}

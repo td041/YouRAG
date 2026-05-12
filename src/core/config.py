@@ -46,6 +46,11 @@ class Settings(BaseSettings):
     CHUNK_SIZE: int = 800
     CHUNK_OVERLAP: int = 150
 
+    # 7. Cấu hình Kết nối (Connection Hub)
+    # Tự động lấy từ Docker Compose hoặc file .env
+    DATABASE_URL: str = "sqlite:///./qdrant_db/chat_history.db"
+    REDIS_URL: str = "redis://localhost:6379/0"
+
     # Pydantic v2 chuẩn:
     model_config = SettingsConfigDict(
         env_file=".env",

@@ -42,7 +42,7 @@ class AnswerGenerator:
             
         return "\n".join(context_parts)
 
-    def generate(self, query: str, retrieved_chunks: List[Dict[str, Any]], global_summary: Optional[str] = None, graph_facts: Optional[List[str]] = None, graph_summary: Optional[str] = None) -> str:
+    def generate(self, query: str, retrieved_chunks: List[Dict[str, Any]], global_summary: Optional[str] = None, graph_facts: Optional[List[str]] = None, graph_summary: Optional[str] = None, chat_history: str = "") -> str:
         """Thực thi sinh câu trả lời RAG với bối cảnh thực thể từ Knowledge Graph."""
         logger.info(f"✨ Production Generation (Graph Enhanced): '{query}'")
 
@@ -61,7 +61,8 @@ class AnswerGenerator:
             context_str=context_str,
             global_summary=global_summary,
             graph_facts=graph_facts,
-            graph_summary=graph_summary
+            graph_summary=graph_summary,
+            chat_history=chat_history
         )
         
         try:
@@ -92,7 +93,7 @@ class AnswerGenerator:
             logger.error(f"❌ Lỗi Generation: {e}")
             return f"Lỗi: {str(e)}"
 
-    def generate_stream(self, query: str, retrieved_chunks: List[Dict[str, Any]], global_summary: Optional[str] = None, graph_facts: Optional[List[str]] = None, graph_summary: Optional[str] = None):
+    def generate_stream(self, query: str, retrieved_chunks: List[Dict[str, Any]], global_summary: Optional[str] = None, graph_facts: Optional[List[str]] = None, graph_summary: Optional[str] = None, chat_history: str = ""):
         """Streaming với bối cảnh thực thể từ Knowledge Graph."""
         logger.info(f"✨ Production Streaming (Graph Enhanced): '{query}'")
         
@@ -107,7 +108,8 @@ class AnswerGenerator:
             context_str=context_str,
             global_summary=global_summary,
             graph_facts=graph_facts,
-            graph_summary=graph_summary
+            graph_summary=graph_summary,
+            chat_history=chat_history
         )
         
         try:
