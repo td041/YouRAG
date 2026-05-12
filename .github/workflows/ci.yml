@@ -49,4 +49,6 @@ jobs:
       - name: Run Integration Tests (Real AI & DB)
         env:
           GROQ_API_KEY: ${{ secrets.CI_GITHUB_TEST }}
+          EMBEDDING_MODEL_NAME: "all-MiniLM-L6-v2"
+          VECTOR_SIZE: 384
         run: poetry run pytest tests/integration/ -v --cov=src --cov-append --cov-report=xml --cov-fail-under=45
