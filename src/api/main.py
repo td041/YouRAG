@@ -1,5 +1,6 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import os
 import sys
@@ -18,6 +19,14 @@ from src.core.logger import setup_logger
 
 logger = setup_logger("YouRAG_API")
 app = FastAPI(title="YouRAG Backend API", version="1.0.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # ─────────────────────────────────────────────
 # KHỞI TẠO SINGLETON MODELS (Load sẵn vào RAM/GPU)

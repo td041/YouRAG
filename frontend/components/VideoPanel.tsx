@@ -3,7 +3,10 @@
 import { useState } from "react";
 import { Collection } from "@/lib/types";
 import { streamSummary } from "@/lib/api";
-import { Play, Sparkles, Loader2, ChevronDown, ChevronUp } from "lucide-react";
+import { 
+  Play, Sparkles, Loader2, ChevronDown, ChevronUp, 
+  ExternalLink, Clock, BookOpen, Info
+} from "lucide-react";
 
 function YouTubeLogo({ size = 16 }: { size?: number }) {
   return (
@@ -21,7 +24,7 @@ interface Props {
 export default function VideoPanel({ collection }: Props) {
   const [summary, setSummary] = useState("");
   const [streaming, setStreaming] = useState(false);
-  const [showSummary, setShowSummary] = useState(false);
+  const [showSummary, setShowSummary] = useState(true);
 
   function handleSummarize() {
     if (!collection || streaming) return;
@@ -38,76 +41,141 @@ export default function VideoPanel({ collection }: Props) {
   }
 
   return (
-    <div className="flex flex-col h-full overflow-y-auto">
+    <div className="flex flex-col h-full bg-[#050608] border-r border-white/[0.04] overflow-hidden">
       {/* Header */}
-      <div className="flex items-center gap-2.5 px-5 h-12 border-b border-white/[.07] shrink-0">
-        <YouTubeLogo size={18} />
-        <span className="text-[11px] font-semibold uppercase tracking-widest text-slate-500">Video Player</span>
+      <div className="flex items-center justify-between px-6 h-14 border-b border-white/[0.04] glass-light shrink-0">
+        <div className="flex items-center gap-3">
+          <YouTubeLogo size={20} />
+          <span className="text-[12px] font-bold uppercase tracking-widest text-slate-400 font-display">Source Viewer</span>
+        </div>
         {collection && (
-          <span className="ml-auto text-[11px] text-slate-600 truncate max-w-[200px]">{collection.title}</span>
-        )}
-      </div>
-
-      {/* Player */}
-      <div className="p-4">
-        {collection?.video_id ? (
-          <div className="relative w-full rounded-xl overflow-hidden border border-white/[.07] bg-black shadow-2xl shadow-black/50"
-               style={{ aspectRatio: "16/9" }}>
-            <iframe
-              src={`https://www.youtube.com/embed/${collection.video_id}?rel=0&modestbranding=1`}
-              title={collection.title}
-              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-              allowFullScreen
-              className="absolute inset-0 w-full h-full"
-            />
-          </div>
-        ) : (
-          <div className="w-full rounded-xl border border-dashed border-white/[.07] bg-[#12151b] flex flex-col items-center justify-center gap-3 py-16">
-            <div className="w-12 h-12 rounded-full bg-white/[.04] border border-white/[.07] flex items-center justify-center">
-              <Play size={20} className="text-slate-600 ml-0.5" />
-            </div>
-            <p className="text-[13px] text-slate-600">Select a video from the library</p>
-          </div>
-        )}
-      </div>
-
-      {/* Summarize */}
-      {collection && (
-        <div className="px-4 pb-4 space-y-3">
-          <button
-            onClick={handleSummarize}
-            disabled={streaming}
-            className="w-full flex items-center justify-center gap-2 bg-white/[.04] hover:bg-white/[.07] disabled:opacity-50 border border-white/[.07] hover:border-white/[.12] text-slate-300 text-[13px] font-medium rounded-xl py-2.5 transition-all"
+          <a 
+            href={`https://youtube.com/watch?v=${collection.video_id}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-500 hover:text-indigo-400 transition-colors"
           >
-            {streaming
-              ? <><Loader2 size={13} className="spin" /><span>Summarizing…</span></>
-              : <><Sparkles size={13} className="text-indigo-400" /><span>Summarize Video</span></>}
-          </button>
+            <span className="hidden sm:inline">Open in YouTube</span>
+            <ExternalLink size={12} />
+          </a>
+        )}
+      </div>
 
-          {(summary || streaming) && (
-            <div className="rounded-xl border border-white/[.07] bg-[#12151b] overflow-hidden">
-              <button
-                onClick={() => setShowSummary(v => !v)}
-                className="w-full flex items-center justify-between px-4 py-2.5 text-[11px] font-semibold uppercase tracking-widest text-slate-500 hover:text-slate-400 transition-colors"
-              >
-                <div className="flex items-center gap-2">
-                  <span className="w-1.5 h-1.5 rounded-full bg-indigo-500" />
-                  <span>Summary</span>
-                </div>
-                {showSummary ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-              </button>
-              {showSummary && (
-                <div className="px-4 pb-4 text-[13px] text-slate-400 leading-relaxed border-t border-white/[.05] pt-3 whitespace-pre-wrap">
-                  {summary}
-                  {streaming && (
-                    <span className="inline-block w-0.5 h-3.5 bg-indigo-400 ml-0.5 -mb-0.5 blink" />
-                  )}
-                </div>
-              )}
+      <div className="flex-1 overflow-y-auto custom-scrollbar">
+        {/* Player Container */}
+        <div className="p-6">
+          {collection?.video_id ? (
+            <div className="group relative">
+              <div className="absolute -inset-1 bg-gradient-to-r from-indigo-500 to-purple-600 rounded-2xl blur opacity-10 group-hover:opacity-20 transition duration-1000" />
+              <div className="relative w-full rounded-2xl overflow-hidden border border-white/[0.08] bg-black shadow-2xl"
+                   style={{ aspectRatio: "16/9" }}>
+                <iframe
+                  src={`https://www.youtube.com/embed/${collection.video_id}?rel=0&modestbranding=1&autoplay=0`}
+                  title={collection.title}
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                  allowFullScreen
+                  className="absolute inset-0 w-full h-full"
+                />
+              </div>
+            </div>
+          ) : (
+            <div className="w-full rounded-2xl border border-dashed border-white/[0.1] bg-white/[0.01] flex flex-col items-center justify-center gap-4 py-24">
+              <div className="w-16 h-16 rounded-3xl bg-white/[0.03] border border-white/[0.06] flex items-center justify-center text-slate-700">
+                <Play size={24} className="ml-1" />
+              </div>
+              <p className="text-[14px] font-medium text-slate-600">Select content to begin analysis</p>
             </div>
           )}
         </div>
-      )}
+
+        {/* Info & Intelligence Section */}
+        {collection && (
+          <div className="px-6 pb-10 space-y-8 animate-fade-in">
+            {/* Metadata Card */}
+            <div className="space-y-4">
+              <h2 className="text-xl font-bold text-white font-display leading-tight tracking-tight">
+                {collection.title}
+              </h2>
+              <div className="flex flex-wrap gap-4">
+                <div className="flex items-center gap-2 text-[12px] text-slate-500">
+                  <div className="w-2 h-2 rounded-full bg-emerald-500" />
+                  Successfully Indexed
+                </div>
+                <div className="flex items-center gap-2 text-[12px] text-slate-500">
+                  <Clock size={14} className="text-slate-700" />
+                  Synced
+                </div>
+              </div>
+            </div>
+
+            {/* Summarization Interface */}
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 text-slate-400">
+                  <Sparkles size={14} className="text-indigo-400" />
+                  <span className="text-[11px] font-bold uppercase tracking-widest">AI Synthesis</span>
+                </div>
+                {summary && !streaming && (
+                  <button 
+                    onClick={handleSummarize}
+                    className="text-[11px] font-bold text-indigo-400 hover:text-indigo-300 transition-colors"
+                  >
+                    Regenerate
+                  </button>
+                )}
+              </div>
+
+              {!summary && !streaming ? (
+                <button
+                  onClick={handleSummarize}
+                  className="w-full group relative overflow-hidden rounded-2xl p-px"
+                >
+                  <div className="absolute inset-0 bg-gradient-to-r from-indigo-500/50 to-purple-500/50 opacity-20 group-hover:opacity-40 transition-opacity" />
+                  <div className="relative bg-[#0d1117] hover:bg-[#12161f] rounded-2xl px-6 py-10 flex flex-col items-center gap-3 transition-colors border border-white/[0.06]">
+                    <div className="w-12 h-12 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center">
+                      <BookOpen size={20} className="text-indigo-400" />
+                    </div>
+                    <div className="text-center">
+                      <p className="text-[15px] font-bold text-slate-200">Generate Intelligence Summary</p>
+                      <p className="text-[12px] text-slate-500 mt-1">Get an instant overview of the key concepts and timeline.</p>
+                    </div>
+                  </div>
+                </button>
+              ) : (
+                <div className="rounded-2xl border border-white/[0.06] bg-white/[0.01] overflow-hidden">
+                  <div className="px-5 py-4 border-b border-white/[0.04] flex items-center justify-between bg-white/[0.01]">
+                    <div className="flex items-center gap-2">
+                      <Info size={14} className="text-indigo-400" />
+                      <span className="text-[12px] font-bold text-slate-300">Detailed Abstract</span>
+                    </div>
+                    {streaming && <Loader2 size={14} className="animate-spin text-indigo-500" />}
+                  </div>
+                  <div className="p-5 text-[14.5px] text-slate-400 leading-relaxed whitespace-pre-wrap font-light">
+                    {summary || "Initializing synthesis engine..."}
+                    {streaming && (
+                      <span className="inline-block w-1.5 h-4 bg-indigo-500 ml-1 rounded-sm blink align-middle" />
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Quick Stats/Metadata (Optional/Mock for now) */}
+            <div className="grid grid-cols-2 gap-3">
+              {[
+                { label: "Processing Mode", value: "Graph-Augmented" },
+                { label: "Vector Space", value: "Hybrid Dense+Sparse" }
+              ].map(stat => (
+                <div key={stat.label} className="p-4 rounded-2xl bg-white/[0.02] border border-white/[0.04]">
+                  <p className="text-[10px] font-bold text-slate-600 uppercase tracking-tighter mb-1">{stat.label}</p>
+                  <p className="text-[13px] font-semibold text-slate-300">{stat.value}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
+

@@ -6,7 +6,7 @@ import { fetchCollections } from "@/lib/api";
 import Sidebar from "@/components/Sidebar";
 import VideoPanel from "@/components/VideoPanel";
 import ChatPanel from "@/components/ChatPanel";
-import { Layers } from "lucide-react";
+import { Menu, X, Activity, LayoutDashboard, Globe } from "lucide-react";
 
 export default function Home() {
   const [collections, setCollections] = useState<Collection[]>([]);
@@ -27,66 +27,93 @@ export default function Home() {
 
   useEffect(() => { loadCollections(); }, []);
 
-  function handleSelect(c: Collection) {
-    setSelected(c);
-  }
-
   return (
-    <div className="flex h-screen overflow-hidden bg-[#0d0f12]">
+    <div className="flex h-screen overflow-hidden bg-[#050608] text-slate-200">
+      {/* Background Glows */}
+      <div className="fixed top-[-10%] left-[-10%] w-[40%] h-[40%] rounded-full bg-indigo-500/5 blur-[120px] pointer-events-none" />
+      <div className="fixed bottom-[-10%] right-[-10%] w-[40%] h-[40%] rounded-full bg-purple-500/5 blur-[120px] pointer-events-none" />
+
       {/* Sidebar */}
-      {sidebarOpen && (
+      <div className={`transition-all duration-500 ease-in-out ${sidebarOpen ? "w-[280px]" : "w-0"} overflow-hidden shrink-0`}>
         <Sidebar
           collections={collections}
           selected={selected}
           apiOnline={apiOnline}
-          onSelect={handleSelect}
+          onSelect={setSelected}
           onIngested={loadCollections}
         />
-      )}
+      </div>
 
-      {/* Main */}
-      <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
-
-        {/* Topbar */}
-        <header className="flex items-center gap-3 px-5 h-12 border-b border-white/[.07] bg-[#0d0f12]/90 backdrop-blur-xl sticky top-0 z-10 shrink-0">
-          <button
-            onClick={() => setSidebarOpen(v => !v)}
-            className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-500 hover:text-slate-300 hover:bg-white/[.05] transition-all"
-            title="Toggle sidebar"
-          >
-            <Layers size={14} />
-          </button>
-
-          <div className="flex items-center gap-2 text-[13px] min-w-0">
-            <span className="text-slate-600 font-medium shrink-0">YouRAG</span>
-            <span className="text-slate-700 shrink-0">/</span>
-            <span className="text-slate-400 truncate">
-              {selected?.title ?? "No video selected"}
-            </span>
+      {/* Main Content Area */}
+      <div className="flex flex-col flex-1 min-w-0 relative">
+        
+        {/* Glass Topbar */}
+        <header className="flex items-center justify-between px-6 h-14 border-b border-white/[0.04] glass z-30">
+          <div className="flex items-center gap-4">
+            <button
+              onClick={() => setSidebarOpen(!sidebarOpen)}
+              className="p-2 rounded-xl hover:bg-white/5 border border-transparent hover:border-white/10 transition-all text-slate-400 hover:text-white"
+            >
+              {sidebarOpen ? <X size={18} /> : <Menu size={18} />}
+            </button>
+            
+            <div className="flex items-center gap-3">
+              <div className="hidden sm:flex items-center gap-2 px-3 py-1 rounded-full bg-white/[0.03] border border-white/[0.06] text-[11px] font-bold text-slate-500 uppercase tracking-widest">
+                <LayoutDashboard size={12} /> Workspace
+              </div>
+              <span className="text-slate-700">/</span>
+              <h2 className="text-[13px] font-semibold text-slate-300 truncate max-w-[300px]">
+                {selected?.title ?? "Awaiting Selection"}
+              </h2>
+            </div>
           </div>
 
-          <div className="ml-auto flex items-center gap-1.5">
-            {["bge-m3", "HybridRRF", "CrossEncoder", "llama-3.3-70b"].map(t => (
-              <span key={t} className="hidden sm:inline text-[10px] font-mono text-slate-700 bg-white/[.03] border border-white/[.05] px-2 py-0.5 rounded">
-                {t}
+          <div className="flex items-center gap-4">
+            <div className="hidden md:flex items-center gap-3 pr-4 border-r border-white/5">
+              {["GraphRAG", "v2.4"].map(tag => (
+                <span key={tag} className="text-[10px] font-bold px-2 py-0.5 rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+                  {tag}
+                </span>
+              ))}
+            </div>
+            
+            <div className="flex items-center gap-2">
+              <div className={`w-2 h-2 rounded-full ${apiOnline ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" : "bg-rose-500"}`} />
+              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-tighter">
+                {apiOnline ? "Core Active" : "Core Standby"}
               </span>
-            ))}
+            </div>
           </div>
         </header>
 
-        {/* Two-pane content */}
-        <div className="flex flex-1 min-h-0 overflow-hidden">
-          {/* Video pane */}
-          <div className="flex flex-col w-[48%] min-w-0 border-r border-white/[.07] overflow-hidden">
-            <VideoPanel collection={selected} />
-          </div>
+        {/* Dynamic Split View */}
+        <main className="flex flex-1 min-h-0 relative z-10">
+          {!selected ? (
+            <div className="flex-1 flex flex-col items-center justify-center animate-fade-in">
+              <div className="w-20 h-20 rounded-3xl bg-white/[0.02] border border-white/[0.06] flex items-center justify-center mb-6">
+                <Globe size={40} className="text-slate-800" />
+              </div>
+              <h3 className="text-2xl font-bold font-display text-white mb-2">Initialize Intelligent Analysis</h3>
+              <p className="text-slate-500 max-w-sm text-center text-[14px] leading-relaxed">
+                Connect a YouTube source from your library to begin deep context extraction and conversational synthesis.
+              </p>
+            </div>
+          ) : (
+            <>
+              {/* Left Pane: Video Insight */}
+              <div className="hidden lg:flex flex-col w-[45%] xl:w-[40%] border-r border-white/[0.04]">
+                <VideoPanel collection={selected} />
+              </div>
 
-          {/* Chat pane */}
-          <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
-            <ChatPanel collection={selected} />
-          </div>
-        </div>
+              {/* Right Pane: AI Chat Interface */}
+              <div className="flex-1 flex flex-col min-w-0">
+                <ChatPanel collection={selected} />
+              </div>
+            </>
+          )}
+        </main>
       </div>
     </div>
   );
 }
+
