@@ -20,6 +20,7 @@ from src.engine.generation.summarizer import VideoSummarizer
 from src.engine.chat.history import ChatHistoryManager
 from src.core.postgres import init_db
 from src.core.logger import setup_logger
+from src.cache.semantic_cache import SemanticCache
 
 logger = setup_logger("YouRAG_API")
 app = FastAPI(title="YouRAG Backend API", version="1.0.0")
@@ -41,6 +42,7 @@ class AIStore:
     generator = None
     summarizer = None
     graph_retriever = None
+    cache = None
 
 @app.on_event("startup")
 async def startup_event():
@@ -51,7 +53,8 @@ async def startup_event():
     AIStore.generator = AnswerGenerator()
     AIStore.summarizer = VideoSummarizer()
     AIStore.graph_retriever = GraphRetriever()
-    logger.info("✅ TẤT CẢ MÔ HÌNH ĐÃ SẴN SÀNG TRONG RAM/GPU!")
+    AIStore.cache = SemanticCache()
+    logger.info("✅ TẤT CẢ MÔ HÌNH VÀ CACHING ĐÃ SẴN SÀNG!")
 
 # ─────────────────────────────────────────────
 # MODELS (Pydantic)
@@ -135,6 +138,23 @@ async def chat_rag(req: ChatRequest):
         history_mgr.add_message(role="user", content=req.query)
         chat_history_str = history_mgr.format_for_prompt()
 
+        # --- CHECK SEMANTIC CACHE ---
+        cached_data = AIStore.cache.check_cache(req.query)
+        if cached_data:
+            answer = cached_data["answer"]
+            sources = cached_data["sources"]
+            facts = cached_data["facts"]
+            
+            history_mgr.add_message(role="assistant", content=answer)
+            return {
+                "answer": answer,
+                "sources": sources,
+                "facts": facts,
+                "graph_entities": [], # entities not cached currently
+                "session_id": session_id,
+                "cached": True
+            }
+
         # 1. Hybrid Search
         hybrid = HybridRetriever(top_k=10)
         candidates = hybrid.search(req.query, collection_name=req.collection)
@@ -169,12 +189,21 @@ async def chat_rag(req: ChatRequest):
             for c in final_chunks
         ]
 
+        # --- SAVE TO CACHE ---
+        AIStore.cache.save_to_cache(
+            query=req.query, 
+            answer=answer, 
+            sources=sources, 
+            facts=graph_data.get("facts", [])
+        )
+
         return {
             "answer": answer,
             "sources": sources,
             "facts": graph_data.get("facts", []),
             "graph_entities": graph_data.get("entities", []),
-            "session_id": session_id
+            "session_id": session_id,
+            "cached": False
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -196,6 +225,22 @@ async def chat_rag_stream(req: ChatRequest):
         history_mgr = ChatHistoryManager(session_id=session_id, collection_name=req.collection)
         history_mgr.add_message(role="user", content=req.query)
         chat_history_str = history_mgr.format_for_prompt()
+
+        # --- CHECK SEMANTIC CACHE ---
+        cached_data = AIStore.cache.check_cache(req.query)
+        if cached_data:
+            def cached_generator():
+                answer = cached_data["answer"]
+                yield answer
+                history_mgr.add_message(role="assistant", content=answer)
+                
+                yield f"\n\n__SOURCES__::{','.join(cached_data['sources'])}"
+                if cached_data.get("facts"):
+                    yield f"\n\n__FACTS__::{'|'.join(cached_data['facts'])}"
+                yield f"\n\n__SESSION__::{session_id}"
+                yield "\n\n__CACHED__::true"
+
+            return StreamingResponse(cached_generator(), media_type="text/plain")
 
         # 1. Hybrid Search
         hybrid = HybridRetriever(top_k=10)
@@ -243,6 +288,14 @@ async def chat_rag_stream(req: ChatRequest):
                 yield f"\n\n__FACTS__::{'|'.join(graph_data['facts'])}"
             
             yield f"\n\n__SESSION__::{session_id}"
+            
+            # --- SAVE TO CACHE ---
+            AIStore.cache.save_to_cache(
+                query=req.query,
+                answer=full_response,
+                sources=sources,
+                facts=graph_data.get("facts", [])
+            )
 
         return StreamingResponse(response_generator(), media_type="text/plain")
     except Exception as e:

@@ -44,16 +44,24 @@ def test_init_custom_threshold(mock_db):
 # ─── check_cache ──────────────────────────────────────────────────────────────
 
 def test_check_cache_hit_returns_answer(mock_db):
-    """Kiểm tra check_cache trả về answer khi tìm thấy điểm có score >= threshold."""
+    """Kiểm tra check_cache trả về dict khi tìm thấy điểm có score >= threshold."""
     fake_point = MagicMock()
     fake_point.score = 0.95
-    fake_point.payload = {"query": "what is AI?", "answer": "AI is artificial intelligence."}
+    fake_point.payload = {
+        "query": "what is AI?", 
+        "answer": "AI is artificial intelligence.",
+        "sources": ["01:00-02:00"],
+        "facts": ["AI exists"]
+    }
     mock_db.client.query_points.return_value.points = [fake_point]
 
     cache = SemanticCache()
     result = cache.check_cache("what is AI?")
 
-    assert result == "AI is artificial intelligence."
+    assert isinstance(result, dict)
+    assert result["answer"] == "AI is artificial intelligence."
+    assert result["sources"] == ["01:00-02:00"]
+    assert result["facts"] == ["AI exists"]
     mock_db.client.query_points.assert_called_once()
 
 
@@ -93,9 +101,9 @@ def test_check_cache_returns_none_on_exception(mock_db):
 # ─── save_to_cache ────────────────────────────────────────────────────────────
 
 def test_save_to_cache_calls_upsert(mock_db):
-    """Kiểm tra save_to_cache gọi client.upsert với payload chứa query và answer."""
+    """Kiểm tra save_to_cache gọi client.upsert với payload chứa query, answer, và metadata."""
     cache = SemanticCache()
-    cache.save_to_cache("what is ML?", "ML is machine learning.")
+    cache.save_to_cache("what is ML?", "ML is machine learning.", sources=["01:00"], facts=["ML works"])
 
     mock_db.client.upsert.assert_called_once()
     call_kwargs = mock_db.client.upsert.call_args.kwargs
@@ -104,6 +112,8 @@ def test_save_to_cache_calls_upsert(mock_db):
     point = call_kwargs["points"][0]
     assert point.payload["query"] == "what is ML?"
     assert point.payload["answer"] == "ML is machine learning."
+    assert point.payload["sources"] == ["01:00"]
+    assert point.payload["facts"] == ["ML works"]
     assert point.vector == [0.1, 0.2, 0.3]
 
 
@@ -157,8 +167,14 @@ def test_roundtrip_miss_then_hit(mock_db):
     # Second call: hit
     fake_point = MagicMock()
     fake_point.score = 0.97
-    fake_point.payload = {"query": "What is deep learning?", "answer": "Deep learning is a subset of ML."}
+    fake_point.payload = {
+        "query": "What is deep learning?", 
+        "answer": "Deep learning is a subset of ML.",
+        "sources": [],
+        "facts": []
+    }
     mock_db.client.query_points.return_value.points = [fake_point]
 
     result = cache.check_cache("What is deep learning?")
-    assert result == "Deep learning is a subset of ML."
+    assert isinstance(result, dict)
+    assert result["answer"] == "Deep learning is a subset of ML."

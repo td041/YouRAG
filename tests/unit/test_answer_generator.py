@@ -14,6 +14,16 @@ def mock_llm_client(mocker):
     return mock_instance
 
 
+@pytest.fixture(autouse=True)
+def mock_semantic_cache(mocker):
+    """Mock SemanticCache to always return None (miss) by default in generator tests."""
+    mock_cls = mocker.patch("src.engine.generation.answer_generator.SemanticCache")
+    mock_instance = MagicMock()
+    mock_instance.check_cache.return_value = None
+    mock_cls.return_value = mock_instance
+    return mock_instance
+
+
 from src.engine.generation.answer_generator import AnswerGenerator  # noqa: E402
 
 
@@ -54,7 +64,7 @@ def test_build_context_string_formats_timestamps():
 
 
 def test_build_context_string_strips_contextual_prefix():
-    """Kiểm tra prefix context (dạng 'prefix\\n\\nactual content') bị loại bỏ đúng."""
+    """Kiểm tra prefix context (dạng 'prefix\n\nactual content') bị loại bỏ đúng."""
     generator = AnswerGenerator()
     chunk = _make_chunk(content="Đây là ngữ cảnh do LLM tạo ra.\n\nNội dung thực sự của chunk.")
     result = generator._build_context_string([chunk])
@@ -65,7 +75,7 @@ def test_build_context_string_strips_contextual_prefix():
 
 # ── Mode detection tests ───────────────────────────────────────────────────
 
-def test_generate_detects_mindmap_mode(mock_llm_client, mocker):
+def test_generate_detects_mindmap_mode(mock_llm_client, mock_semantic_cache, mocker):
     """Kiểm tra query chứa 'sơ đồ' kích hoạt mode='mindmap'."""
     mock_pb = mocker.patch("src.engine.generation.answer_generator.PromptBuilder")
     mock_pb.build_system_prompt.return_value = "system prompt"
@@ -77,7 +87,7 @@ def test_generate_detects_mindmap_mode(mock_llm_client, mocker):
     mock_pb.build_system_prompt.assert_called_once_with(mode="mindmap")
 
 
-def test_generate_detects_standard_mode(mock_llm_client, mocker):
+def test_generate_detects_standard_mode(mock_llm_client, mock_semantic_cache, mocker):
     """Kiểm tra query thông thường kích hoạt mode='standard'."""
     mock_pb = mocker.patch("src.engine.generation.answer_generator.PromptBuilder")
     mock_pb.build_system_prompt.return_value = "system prompt"
@@ -91,7 +101,7 @@ def test_generate_detects_standard_mode(mock_llm_client, mocker):
 
 # ── Self-correction tests ──────────────────────────────────────────────────
 
-def test_generate_calls_self_correction_when_graph_facts(mock_llm_client):
+def test_generate_calls_self_correction_when_graph_facts(mock_llm_client, mock_semantic_cache):
     """Kiểm tra self-correction được kích hoạt khi có graph_facts."""
     generator = AnswerGenerator()
     generator.generate(
@@ -103,7 +113,7 @@ def test_generate_calls_self_correction_when_graph_facts(mock_llm_client):
     assert mock_llm_client.chat_complete.call_count == 2
 
 
-def test_generate_skips_self_correction_when_no_graph_facts(mock_llm_client):
+def test_generate_skips_self_correction_when_no_graph_facts(mock_llm_client, mock_semantic_cache):
     """Kiểm tra self-correction KHÔNG kích hoạt khi graph_facts=None."""
     generator = AnswerGenerator()
     generator.generate(
@@ -117,7 +127,7 @@ def test_generate_skips_self_correction_when_no_graph_facts(mock_llm_client):
 
 # ── Error handling test ────────────────────────────────────────────────────
 
-def test_generate_returns_error_string_on_exception(mock_llm_client):
+def test_generate_returns_error_string_on_exception(mock_llm_client, mock_semantic_cache):
     """Kiểm tra generate trả về chuỗi bắt đầu bằng 'Lỗi:' khi chat_complete raise."""
     mock_llm_client.chat_complete.side_effect = Exception("API timeout")
 
@@ -129,3 +139,26 @@ def test_generate_returns_error_string_on_exception(mock_llm_client):
 
     assert result.startswith("Lỗi:")
     assert "API timeout" in result
+
+
+# ── Caching tests ─────────────────────────────────────────────────────────
+
+def test_generate_returns_cached_answer_on_hit(mock_llm_client, mock_semantic_cache):
+    """Kiểm tra generate trả về câu trả lời từ cache nếu có hit, và không gọi LLM."""
+    mock_semantic_cache.check_cache.return_value = "Cached answer"
+
+    generator = AnswerGenerator()
+    result = generator.generate(query="hello", retrieved_chunks=[])
+
+    assert result == "Cached answer"
+    assert mock_llm_client.chat_complete.call_count == 0
+
+
+def test_generate_saves_to_cache_on_miss(mock_llm_client, mock_semantic_cache):
+    """Kiểm tra generate lưu kết quả vào cache sau khi gọi LLM."""
+    mock_llm_client.chat_complete.return_value = "LLM answer"
+    
+    generator = AnswerGenerator()
+    generator.generate(query="hello", retrieved_chunks=[])
+
+    mock_semantic_cache.save_to_cache.assert_called_once_with("hello", "LLM answer")

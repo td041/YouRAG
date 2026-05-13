@@ -33,11 +33,10 @@ class SemanticCache:
         digest = hashlib.sha256(query.encode("utf-8")).hexdigest()
         return int(digest, 16) % (2**63)
 
-    def check_cache(self, query: str) -> Optional[str]:
+    def check_cache(self, query: str) -> Optional[dict]:
         """Embed query and search for a semantically similar cached answer.
 
-        Returns the cached answer string if a hit is found above the threshold,
-        or None if no match exists.
+        Returns a dict {answer, sources, facts} if a hit is found, or None.
         """
         try:
             vector = self._embed(query)
@@ -51,28 +50,38 @@ class SemanticCache:
             if results.points:
                 hit = results.points[0]
                 logger.info(
-                    f"[SemanticCache] HIT (score={hit.score:.4f}) for query: '{query[:60]}...'"
+                    f"[SemanticCache] 🎯 HIT (score={hit.score:.4f}) for query: '{query[:60]}...'"
                 )
-                return hit.payload.get("answer")
+                return {
+                    "answer": hit.payload.get("answer"),
+                    "sources": hit.payload.get("sources", []),
+                    "facts": hit.payload.get("facts", [])
+                }
         except Exception as e:
             logger.warning(f"[SemanticCache] check_cache error (non-fatal): {e}")
         return None
 
-    def save_to_cache(self, query: str, answer: str) -> None:
-        """Embed query and upsert (query_vector, answer) into the cache collection."""
+    def save_to_cache(self, query: str, answer: str, sources: list = None, facts: list = None) -> None:
+        """Embed query and upsert (query_vector, answer, metadata) into the cache collection."""
         try:
             vector = self._embed(query)
             point_id = self._make_id(query)
+            payload = {
+                "query": query, 
+                "answer": answer,
+                "sources": sources or [],
+                "facts": facts or []
+            }
             self.db.client.upsert(
                 collection_name=self.CACHE_COLLECTION,
                 points=[
                     PointStruct(
                         id=point_id,
                         vector=vector,
-                        payload={"query": query, "answer": answer},
+                        payload=payload,
                     )
                 ],
             )
-            logger.info(f"[SemanticCache] SAVED entry id={point_id} for query: '{query[:60]}...'")
+            logger.info(f"[SemanticCache] ✅ SAVED entry id={point_id} for query: '{query[:60]}...'")
         except Exception as e:
             logger.warning(f"[SemanticCache] save_to_cache error (non-fatal): {e}")
