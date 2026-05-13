@@ -65,10 +65,10 @@ shell-db:
 	$(DC) exec postgres psql -U yourag_user -d yourag_db
 
 test:
-	pytest tests/ -v --cov=src
+	poetry run pytest tests/ -v --cov=src
 
 lint:
-	ruff check src/
+	poetry run ruff check src/
 
 clean:
 	$(DC) down --remove-orphans

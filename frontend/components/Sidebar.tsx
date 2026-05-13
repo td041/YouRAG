@@ -5,7 +5,7 @@ import { Collection } from "@/lib/types";
 import { ingestVideo } from "@/lib/api";
 import {
   Plus, Library, Loader2, CheckCircle2,
-  XCircle, ChevronRight, Wifi, WifiOff,
+  XCircle, 
   Search, Sparkles, Globe
 } from "lucide-react";
 

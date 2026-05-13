@@ -4,8 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import { Message, Collection } from "@/lib/types";
 import { streamChat } from "@/lib/api";
 import { 
-  MessageSquare, Send, Trash2, Layers, Zap, 
-  BarChart3, Cpu, Sparkles, User, Bot, Clock, Loader2
+  Send, Trash2, Layers, Zap, 
+  Cpu, Sparkles, User, Bot, Clock, Loader2
 } from "lucide-react";
 
 interface Props {

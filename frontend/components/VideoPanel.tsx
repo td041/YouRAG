@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Collection } from "@/lib/types";
 import { streamSummary } from "@/lib/api";
 import { 
-  Play, Sparkles, Loader2, ChevronDown, ChevronUp, 
+  Play, Sparkles, Loader2, 
   ExternalLink, Clock, BookOpen, Info
 } from "lucide-react";
 
@@ -24,13 +24,11 @@ interface Props {
 export default function VideoPanel({ collection }: Props) {
   const [summary, setSummary] = useState("");
   const [streaming, setStreaming] = useState(false);
-  const [showSummary, setShowSummary] = useState(true);
 
   function handleSummarize() {
     if (!collection || streaming) return;
     setSummary("");
     setStreaming(true);
-    setShowSummary(true);
 
     streamSummary(
       collection.name,

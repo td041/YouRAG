@@ -6,7 +6,7 @@ import { fetchCollections } from "@/lib/api";
 import Sidebar from "@/components/Sidebar";
 import VideoPanel from "@/components/VideoPanel";
 import ChatPanel from "@/components/ChatPanel";
-import { Menu, X, Activity, LayoutDashboard, Globe } from "lucide-react";
+import { Menu, X, LayoutDashboard, Globe } from "lucide-react";
 
 export default function Home() {
   const [collections, setCollections] = useState<Collection[]>([]);
@@ -25,7 +25,7 @@ export default function Home() {
     }
   }, [selected]);
 
-  useEffect(() => { loadCollections(); }, []);
+  useEffect(() => { loadCollections(); }, [loadCollections]);
 
   return (
     <div className="flex h-screen overflow-hidden bg-[#050608] text-slate-200">
