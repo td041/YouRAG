@@ -129,3 +129,54 @@ def test_chat_complete_raises_after_max_retries():
             client.chat_complete("test prompt")
 
     assert mock_groq_instance.chat.completions.create.call_count == 3
+
+
+# ── Streaming tests ────────────────────────────────────────────────────────
+
+def test_chat_complete_stream_groq():
+    """Kiểm tra streaming mode với Groq provider dùng LLM_MODEL_NAME."""
+    with patch("groq.Groq") as mock_groq_cls:
+        mock_groq_instance = MagicMock()
+        mock_groq_cls.return_value = mock_groq_instance
+
+        # Mock streaming response
+        chunk1 = MagicMock()
+        chunk1.choices[0].delta.content = "Hello"
+        chunk2 = MagicMock()
+        chunk2.choices[0].delta.content = " World"
+        chunk3 = MagicMock()
+        chunk3.choices[0].delta.content = None  # End marker
+
+        mock_groq_instance.chat.completions.create.return_value = iter([chunk1, chunk2, chunk3])
+
+        client = LLMClient(provider="groq")
+        results = list(client.chat_complete_stream("test"))
+
+    assert results == ["Hello", " World"]
+
+
+def test_chat_complete_stream_error_yields_error():
+    """Kiểm tra streaming trả về thông báo lỗi khi API crash."""
+    with patch("groq.Groq") as mock_groq_cls:
+        mock_groq_instance = MagicMock()
+        mock_groq_cls.return_value = mock_groq_instance
+        mock_groq_instance.chat.completions.create.side_effect = Exception("Stream crash")
+
+        client = LLMClient(provider="groq")
+        results = list(client.chat_complete_stream("test"))
+
+    assert len(results) == 1
+    assert "Lỗi Streaming" in results[0]
+
+
+def test_openai_provider_selection(mock_settings_and_providers):
+    """Kiểm tra OpenAI provider khi có API key."""
+    import sys
+    mock_openai_module = MagicMock()
+    mock_openai_module.OpenAI = MagicMock(return_value=MagicMock())
+    mock_settings_and_providers.LLM_PROVIDER = "openai"
+    mock_settings_and_providers.OPENAI_API_KEY = MagicMock()
+    mock_settings_and_providers.OPENAI_API_KEY.get_secret_value.return_value = "fake_key"
+    with patch.dict(sys.modules, {"openai": mock_openai_module}):
+        client = LLMClient(provider="openai")
+    assert client.provider == "openai"

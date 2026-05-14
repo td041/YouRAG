@@ -119,3 +119,106 @@ def test_load_video_data_raises_on_invalid_url(loader):
     """Kiểm tra load_video_data raise ValueError khi URL không hợp lệ."""
     with pytest.raises(ValueError, match="URL YouTube không hợp lệ"):
         loader.load_video_data("not-a-youtube-url")
+
+
+# ── Success path tests ────────────────────────────────────────────────────
+
+def test_fetch_metadata_success(loader):
+    """Kiểm tra fetch_metadata lấy đúng thông tin khi pytubefix hoạt động."""
+    url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+
+    with patch("src.engine.ingestion.youtube_loader.YouTube") as mock_yt:
+        mock_instance = MagicMock()
+        mock_instance.title = "Test Video"
+        mock_instance.author = "Test Author"
+        mock_instance.length = 300
+        mock_instance.publish_date = "2024-01-01"
+        mock_instance.views = 1000
+        mock_yt.return_value = mock_instance
+
+        result = loader.fetch_metadata(url)
+
+    assert result["title"] == "Test Video"
+    assert result["author"] == "Test Author"
+    assert result["length_sec"] == 300
+    assert result["views"] == 1000
+
+
+def test_fetch_transcript_success(loader):
+    """Kiểm tra fetch_transcript lấy + làm sạch transcript thành công."""
+    with patch("src.engine.ingestion.youtube_loader.YouTubeTranscriptApi") as mock_api:
+        mock_instance = MagicMock()
+
+        # Mock transcript snippets
+        s1 = MagicMock()
+        s1.text = "Hello world"
+        s1.start = 0.0
+        s1.duration = 1.5
+
+        s2 = MagicMock()
+        s2.text = "Test\xa0content"  # Has non-breaking space
+        s2.start = 1.5
+        s2.duration = 2.0
+
+        mock_instance.fetch.return_value = [s1, s2]
+        mock_api.return_value = mock_instance
+
+        result = loader.fetch_transcript("dQw4w9WgXcQ")
+
+    assert len(result) == 2
+    assert result[0]["text"] == "Hello world"
+    assert result[1]["text"] == "Test content"  # \xa0 cleaned
+
+
+def test_fetch_transcript_fallback_to_auto_generated(loader):
+    """Kiểm tra fallback lấy transcript auto-generated khi vi/en không có."""
+    with patch("src.engine.ingestion.youtube_loader.YouTubeTranscriptApi") as mock_api:
+        mock_instance = MagicMock()
+
+        # fetch() raises for vi/en
+        mock_instance.fetch.side_effect = Exception("No vi/en")
+
+        # Fallback: list().fetch() trả về transcript auto
+        s1 = MagicMock()
+        s1.text = "Auto generated"
+        s1.start = 0.0
+        s1.duration = 1.0
+
+        mock_transcript = MagicMock()
+        mock_transcript.fetch.return_value = [s1]
+        mock_instance.list.return_value = iter([mock_transcript])
+        mock_api.return_value = mock_instance
+
+        result = loader.fetch_transcript("dQw4w9WgXcQ")
+
+    assert len(result) == 1
+    assert result[0]["text"] == "Auto generated"
+
+
+def test_load_video_data_success(loader):
+    """Kiểm tra load_video_data chạy song song metadata + transcript."""
+    url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+
+    with patch.object(loader, "fetch_metadata") as mock_meta, \
+         patch.object(loader, "fetch_transcript") as mock_trans:
+        mock_meta.return_value = {"title": "Vid", "video_id": "dQw4w9WgXcQ"}
+        mock_trans.return_value = [{"text": "Hello", "start": 0, "duration": 1}]
+
+        result = loader.load_video_data(url)
+
+    assert result["metadata"]["title"] == "Vid"
+    assert len(result["transcript"]) == 1
+
+
+def test_load_video_data_raises_on_empty_transcript(loader):
+    """Kiểm tra raise ValueError khi transcript trống."""
+    url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+
+    with patch.object(loader, "fetch_metadata") as mock_meta, \
+         patch.object(loader, "fetch_transcript") as mock_trans:
+        mock_meta.return_value = {"title": "Vid"}
+        mock_trans.return_value = []  # Empty transcript
+
+        with pytest.raises(ValueError, match="Không tìm thấy Transcript"):
+            loader.load_video_data(url)
+

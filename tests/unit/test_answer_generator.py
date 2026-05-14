@@ -162,3 +162,54 @@ def test_generate_saves_to_cache_on_miss(mock_llm_client, mock_semantic_cache):
     generator.generate(query="hello", retrieved_chunks=[])
 
     mock_semantic_cache.save_to_cache.assert_called_once_with("hello", "LLM answer")
+
+
+# ── Streaming tests ────────────────────────────────────────────────────────
+
+def test_generate_stream_yields_chunks(mock_llm_client, mock_semantic_cache):
+    """Kiểm tra generate_stream yield từng chunk từ LLM."""
+    mock_llm_client.chat_complete_stream.return_value = iter(["Hello", " World"])
+
+    generator = AnswerGenerator()
+    results = list(generator.generate_stream(query="test", retrieved_chunks=[]))
+
+    assert results == ["Hello", " World"]
+
+
+def test_generate_stream_error_yields_error(mock_llm_client, mock_semantic_cache):
+    """Kiểm tra generate_stream yield lỗi khi LLM crash."""
+    mock_llm_client.chat_complete_stream.side_effect = Exception("Stream crash")
+
+    generator = AnswerGenerator()
+    results = list(generator.generate_stream(query="test", retrieved_chunks=[]))
+
+    assert len(results) == 1
+    assert "Lỗi" in results[0]
+
+
+def test_generate_stream_with_graph_facts(mock_llm_client, mock_semantic_cache):
+    """Kiểm tra generate_stream inject graph facts vào prompt."""
+    mock_llm_client.chat_complete_stream.return_value = iter(["Answer"])
+
+    generator = AnswerGenerator()
+    list(generator.generate_stream(
+        query="test", retrieved_chunks=[],
+        graph_facts=["Python is great"],
+        graph_summary="Summary"
+    ))
+
+    mock_llm_client.chat_complete_stream.assert_called_once()
+
+
+def test_generate_with_chat_history(mock_llm_client, mock_semantic_cache, mocker):
+    """Kiểm tra generate truyền chat_history vào prompt builder."""
+    mock_pb = mocker.patch("src.engine.generation.answer_generator.PromptBuilder")
+    mock_pb.build_system_prompt.return_value = "sys"
+    mock_pb.build_user_prompt.return_value = "user"
+
+    generator = AnswerGenerator()
+    generator.generate(query="test", retrieved_chunks=[], chat_history="User: hi\nAI: hello")
+
+    mock_pb.build_user_prompt.assert_called_once()
+    call_kwargs = mock_pb.build_user_prompt.call_args
+    assert call_kwargs.kwargs.get("chat_history") == "User: hi\nAI: hello"

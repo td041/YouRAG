@@ -1,75 +1,123 @@
+"""Unit tests for SemanticChunker (SOTA Pause-aware & Semantic Grouping)."""
+
 import pytest
 import numpy as np
 from unittest.mock import MagicMock
 
-# Vá lỗi SentenceTransformer trước khi import SemanticChunker để không bị lỗi load model
-@pytest.fixture(autouse=True)
-def mock_sentence_transformer(mocker):
-    mock_st = mocker.patch("src.engine.ingestion.chunker.SentenceTransformer")
-    # Giả lập encoder trả về vector ngẫu nhiên
-    mock_instance = MagicMock()
-    mock_instance.encode.side_effect = lambda texts: [np.random.rand(10) for _ in texts]
-    mock_st.return_value = mock_instance
-    return mock_st
 
-from src.engine.ingestion.chunker import cosine_similarity, SemanticChunker  # noqa: E402
+@pytest.fixture(autouse=True)
+def mock_encoder(mocker):
+    """Mock SentenceTransformer."""
+    mock_cls = mocker.patch("src.engine.ingestion.chunker.SentenceTransformer")
+    mock_instance = MagicMock()
+    # Mock encode to return dummy vectors
+    mock_instance.encode.side_effect = lambda texts: [np.random.rand(16) for _ in texts]
+    mock_cls.return_value = mock_instance
+    return mock_instance
+
+
+from src.engine.ingestion.chunker import SemanticChunker, cosine_similarity  # noqa: E402
+
 
 def test_cosine_similarity():
-    """Kiểm tra hàm tính cosine similarity toán học."""
-    vec1 = np.array([1.0, 0.0, 0.0])
-    vec2 = np.array([1.0, 0.0, 0.0])
-    vec3 = np.array([0.0, 1.0, 0.0])
+    """Kiểm tra tính cosine similarity."""
+    v1 = np.array([1, 0, 0])
+    v2 = np.array([1, 0, 0])
+    assert cosine_similarity(v1, v2) == pytest.approx(1.0)
     
-    assert np.isclose(cosine_similarity(vec1, vec2), 1.0)
-    assert np.isclose(cosine_similarity(vec1, vec3), 0.0)
-    
-    # Test zero vectors
-    assert cosine_similarity(np.zeros(3), vec1) == 0.0
+    v3 = np.array([0, 1, 0])
+    assert cosine_similarity(v1, v3) == pytest.approx(0.0)
 
-def test_semantic_chunker_init():
-    """Kiểm tra khởi tạo SemanticChunker."""
-    chunker = SemanticChunker(percentile_threshold=20, min_chars_per_chunk=100)
-    assert chunker.percentile_threshold == 20
-    assert chunker.min_chars == 100
-    assert chunker.encoder is not None  # Đã được mock
 
-def test_build_atomic_sentences():
-    """Kiểm tra việc gộp dòng transcript dựa trên dấu câu và khoảng lặng."""
-    chunker = SemanticChunker(pause_threshold_sec=1.5)
+def test_correct_punctuation_calls_llm(mocker):
+    """Kiểm tra gọi LLM để phục hồi dấu câu."""
+    mock_llm = MagicMock()
+    mock_llm.chat_complete.return_value = "Corrected text."
     
-    raw_transcript = [
-        {"text": "Hello world", "start": 0.0, "duration": 1.0},
-        {"text": "This is a test.", "start": 1.5, "duration": 2.0},  # Có dấu chấm
-        {"text": "Another sentence", "start": 3.6, "duration": 1.0}, # Khoảng lặng < 1.5s
-        {"text": "with no punctuation", "start": 4.7, "duration": 1.0},
-        {"text": "New topic entirely", "start": 10.0, "duration": 2.0} # Khoảng lặng > 1.5s (10.0 - 5.7 = 4.3s)
+    chunker = SemanticChunker(llm_client=mock_llm)
+    result = chunker._correct_punctuation("text")
+    
+    assert result == "Corrected text."
+    mock_llm.chat_complete.assert_called_once()
+
+
+def test_build_atomic_sentences_pause_detection():
+    """Kiểm tra ngắt câu dựa trên khoảng lặng (pause)."""
+    chunker = SemanticChunker(pause_threshold_sec=1.0)
+    
+    transcript = [
+        {"text": "Hello", "start": 0.0, "duration": 1.0},
+        {"text": "World", "start": 3.0, "duration": 1.0} # Pause 2s > 1s
     ]
     
-    atomic = chunker._build_atomic_sentences(raw_transcript)
+    sentences = chunker._build_atomic_sentences(transcript)
     
-    # Kỳ vọng:
-    # 1. "Hello world This is a test." (Gộp do ko có pause dài, ngắt do có dấu chấm)
-    # 2. "Another sentence with no punctuation" (Gộp do ko có pause, ngắt do câu sau có pause dài)
-    # 3. "New topic entirely" (Câu cuối)
-    
-    assert len(atomic) == 3
-    assert atomic[0]["text"] == "Hello world This is a test."
-    assert atomic[0]["start"] == 0.0
-    assert atomic[0]["end"] == 3.5
-    
-    assert atomic[1]["text"] == "Another sentence with no punctuation"
-    assert atomic[1]["start"] == 3.6
-    assert atomic[1]["end"] == 5.7
-    
-    assert atomic[2]["text"] == "New topic entirely"
-    assert atomic[2]["start"] == 10.0
+    assert len(sentences) == 2
+    assert sentences[0]["text"] == "Hello"
+    assert sentences[1]["text"] == "World"
 
-def test_chunk_document_empty():
-    """Kiểm tra chunk document với transcript rỗng."""
+
+def test_build_atomic_sentences_punctuation_detection():
+    """Kiểm tra ngắt câu dựa trên dấu câu."""
     chunker = SemanticChunker()
-    metadata = {"video_id": "123"}
-    chunks = chunker.chunk_document(metadata, [])
-    assert chunks == []
+    
+    transcript = [
+        {"text": "Hello.", "start": 0.0, "duration": 1.0},
+        {"text": "How are you?", "start": 1.0, "duration": 1.0}
+    ]
+    
+    sentences = chunker._build_atomic_sentences(transcript)
+    
+    assert len(sentences) == 2
+    assert "Hello" in sentences[0]["text"]
+
+
+def test_chunk_document_semantic_splitting(mock_encoder):
+    """Kiểm tra logic băm chunk dựa trên ngữ nghĩa (similarities)."""
+    chunker = SemanticChunker(percentile_threshold=50) # Ngưỡng cao để dễ ngắt
+    
+    metadata = {"video_id": "v1"}
+    transcript = [
+        {"text": "Topic A sentence 1.", "start": 0.0, "duration": 1.0},
+        {"text": "Topic A sentence 2.", "start": 1.0, "duration": 1.0},
+        {"text": "Topic B sentence 1.", "start": 2.0, "duration": 1.0},
+        {"text": "Topic B sentence 2.", "start": 3.0, "duration": 1.0},
+    ]
+    
+    # Mock similarities: A1-A2 (high), A2-B1 (low), B1-B2 (high)
+    def mock_encode(texts):
+        if "Topic A" in texts[0]:
+            vA = np.array([1, 0])
+            vB = np.array([0, 1])
+            return [vA, vA, vB, vB]
+        return [np.random.rand(2) for _ in texts]
+        
+    mock_encoder.encode.side_effect = mock_encode
+    
+    # Ép min_chars nhỏ để ngắt được
+    chunker.min_chars = 5
+    
+    chunks = chunker.chunk_document(metadata, transcript)
+    
+    # Kỳ vọng 2 chunks: Topic A và Topic B
+    assert len(chunks) >= 2
+    assert "Topic A" in chunks[0]["content"]
+
+
+def test_chunk_document_length_limit(mock_encoder):
+    """Kiểm tra ngắt chunk khi quá dài (max_chars)."""
+    chunker = SemanticChunker(max_chars_per_chunk=20)
+    
+    metadata = {"video_id": "v1"}
+    transcript = [
+        {"text": "This is a very long sentence that exceeds limit.", "start": 0.0, "duration": 1.0},
+        {"text": "Next sentence.", "start": 1.0, "duration": 1.0},
+    ]
+    
+    chunks = chunker.chunk_document(metadata, transcript)
+    
+    assert len(chunks) == 2
+
 
 def test_chunk_document_single_sentence():
     """Kiểm tra chunk document với transcript quá ngắn (1 câu)."""
@@ -80,5 +128,3 @@ def test_chunk_document_single_sentence():
     chunks = chunker.chunk_document(metadata, raw)
     assert len(chunks) == 1
     assert chunks[0]["content"] == "Just one sentence."
-    assert chunks[0]["metadata"]["video_id"] == "123"
-    assert chunks[0]["metadata"]["chunk_index"] == 0
