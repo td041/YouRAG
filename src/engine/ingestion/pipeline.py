@@ -279,7 +279,7 @@ def _run_save_to_qdrant(
         payload.update(meta)
         points.append(models.PointStruct(
             id=str(uuid.uuid5(uuid.NAMESPACE_URL, f"{video_id}_{i}")),
-            vector=emb.tolist(),
+            vector=emb.tolist() if hasattr(emb, "tolist") else emb,
             payload=payload,
         ))
 

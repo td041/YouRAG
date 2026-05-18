@@ -223,3 +223,89 @@ def test_load_video_data_raises_on_empty_transcript(loader):
         with pytest.raises(ValueError, match="Không tìm thấy transcript"):
             loader.load_video_data(url)
 
+
+# ── Whisper fallback tests ─────────────────────────────────────────────────
+
+def test_load_video_data_whisper_fallback_success(loader):
+    """Kiểm tra Whisper được gọi khi YouTube không có transcript và trả về kết quả."""
+    url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    whisper_transcript = [{"text": "Whisper text", "start": 0.0, "duration": 2.0}]
+
+    with patch.object(loader, "fetch_metadata", return_value={"title": "Vid", "video_id": "dQw4w9WgXcQ"}), \
+         patch.object(loader, "fetch_transcript", return_value=[]), \
+         patch.object(loader, "_transcribe_with_whisper", return_value=whisper_transcript):
+
+        result = loader.load_video_data(url)
+
+    assert result["transcript"] == whisper_transcript
+    assert result["metadata"]["title"] == "Vid"
+
+
+def test_transcribe_with_whisper_no_faster_whisper(loader):
+    """Kiểm tra RuntimeError khi faster-whisper chưa được cài."""
+    import sys
+    with patch.dict(sys.modules, {"faster_whisper": None}):
+        with pytest.raises((RuntimeError, ImportError)):
+            loader._transcribe_with_whisper("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+
+
+def test_transcribe_with_whisper_success(loader):
+    """Kiểm tra _transcribe_with_whisper trả về đúng format transcript."""
+    import sys
+
+    # Mock faster_whisper module
+    mock_fw = MagicMock()
+    mock_model = MagicMock()
+
+    seg1 = MagicMock()
+    seg1.text = " Hello from Whisper"
+    seg1.start = 0.0
+    seg1.end = 2.5
+
+    seg2 = MagicMock()
+    seg2.text = "   "  # empty — phải bị bỏ qua
+    seg2.start = 3.0
+    seg2.end = 4.0
+
+    mock_info = MagicMock()
+    mock_info.language = "en"
+    mock_info.language_probability = 0.99
+    mock_model.transcribe.return_value = (iter([seg1, seg2]), mock_info)
+    mock_fw.WhisperModel.return_value = mock_model
+
+    mock_yt_instance = MagicMock()
+    mock_stream = MagicMock()
+    mock_stream.abr = "128kbps"
+    mock_yt_instance.streams.filter.return_value.order_by.return_value.last.return_value = mock_stream
+    mock_stream.download.return_value = "/tmp/audio"
+
+    with patch.dict(sys.modules, {"faster_whisper": mock_fw}), \
+         patch("src.engine.ingestion.youtube_loader.YouTube", return_value=mock_yt_instance), \
+         patch("tempfile.TemporaryDirectory") as mock_tmpdir:
+        mock_tmpdir.return_value.__enter__.return_value = "/tmp/fake"
+
+        result = loader._transcribe_with_whisper("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+
+    # seg1 được giữ lại, seg2 (empty) bị bỏ
+    assert len(result) == 1
+    assert result[0]["text"] == "Hello from Whisper"
+    assert result[0]["start"] == 0.0
+    assert result[0]["duration"] == 2.5
+
+
+def test_transcribe_with_whisper_no_audio_stream(loader):
+    """Kiểm tra ValueError khi video không có audio stream."""
+    import sys
+    mock_fw = MagicMock()
+
+    mock_yt_instance = MagicMock()
+    mock_yt_instance.streams.filter.return_value.order_by.return_value.last.return_value = None
+
+    with patch.dict(sys.modules, {"faster_whisper": mock_fw}), \
+         patch("src.engine.ingestion.youtube_loader.YouTube", return_value=mock_yt_instance), \
+         patch("tempfile.TemporaryDirectory") as mock_tmpdir:
+        mock_tmpdir.return_value.__enter__.return_value = "/tmp/fake"
+
+        with pytest.raises(ValueError, match="audio stream"):
+            loader._transcribe_with_whisper("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+
