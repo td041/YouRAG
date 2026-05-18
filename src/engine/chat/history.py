@@ -2,7 +2,7 @@ import json
 import redis
 from typing import List, Dict
 from sqlmodel import Session, select
-from datetime import datetime
+from datetime import datetime, timezone
 
 from src.core.config import settings
 from src.core.postgres import engine
@@ -48,7 +48,7 @@ class ChatHistoryManager:
                 # Cập nhật thời gian session
                 session = db.get(ChatSession, self.session_id)
                 if session:
-                    session.updated_at = datetime.utcnow()
+                    session.updated_at = datetime.now(timezone.utc)
                     db.add(session)
                 db.commit()
         except Exception as e:

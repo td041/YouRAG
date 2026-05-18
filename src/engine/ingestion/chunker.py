@@ -4,6 +4,7 @@ from typing import List, Dict
 from sentence_transformers import SentenceTransformer
 
 from src.core.logger import logger
+from src.core.config import settings
 
 
 def cosine_similarity(vec1: np.ndarray, vec2: np.ndarray) -> float:
@@ -40,9 +41,11 @@ class SemanticChunker:
         self.llm_client = kwargs.get('llm_client', None)
         
         # Load mô hình nhúng siêu nhẹ để tính toán semantic similarity siêu tốc
-        model_name = "all-MiniLM-L6-v2"  
-        logger.info(f"Đang tải siêu mô hình nhúng {model_name} cho Semantic Chunking...")
-        self.encoder = SentenceTransformer(model_name)
+        # Dùng model riêng nhẹ hơn BAAI/bge-m3 để chunking nhanh hơn
+        chunker_model = "all-MiniLM-L6-v2"
+        logger.info(f"Đang tải siêu mô hình nhúng {chunker_model} cho Semantic Chunking...")
+        self.encoder = SentenceTransformer(chunker_model)
+        self._contextual_model = settings.LLM_CONTEXTUAL_MODEL
 
     def _correct_punctuation(self, text: str) -> str:
         """Dùng LLM (nếu có) để phục hồi dấu chấm câu cho Transcript thô."""
@@ -56,7 +59,7 @@ class SemanticChunker:
                 system="You are a punctuation restoration bot. ONLY return the punctuated text. No extra words.",
                 max_tokens=600,
                 temperature=0.0,
-                model="llama-3.1-8b-instant"
+                model=self._contextual_model
             )
             return corrected.strip() if corrected else text
         except Exception as e:

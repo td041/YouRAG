@@ -81,7 +81,7 @@ class ContextualEnricher:
 
     def _cache_key(self, video_id: str, chunk_index: int, chunk_text: str) -> str:
         """Hash duy nhất cho mỗi (video, chunk) → dùng làm tên file cache."""
-        raw = f"{video_id}|{chunk_index}|{chunk_text[:200]}"
+        raw = f"{video_id}|{chunk_index}|{chunk_text}"
         return hashlib.md5(raw.encode(), usedforsecurity=False).hexdigest()
 
     def _cache_path(self, key: str) -> str:
