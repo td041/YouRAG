@@ -1,4 +1,9 @@
 const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
+const API_KEY = process.env.NEXT_PUBLIC_API_KEY ?? "";
+
+function authHeaders(extra?: Record<string, string>): Record<string, string> {
+  return API_KEY ? { "X-API-Key": API_KEY, ...extra } : { ...extra };
+}
 
 export async function fetchCollections() {
   const r = await fetch(`${BASE}/collections`, { cache: "no-store" });
@@ -15,7 +20,7 @@ export async function ingestVideo(
   // Kick off async job
   const r = await fetch(`${BASE}/ingest`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({ url, use_contextual: useContextual, use_late_chunking: useLateChunking }),
   });
   if (!r.ok) throw new Error(await r.text());
@@ -34,7 +39,7 @@ export async function ingestVideo(
 }
 
 export async function deleteCollection(name: string) {
-  const r = await fetch(`${BASE}/collections/${encodeURIComponent(name)}`, { method: "DELETE" });
+  const r = await fetch(`${BASE}/collections/${encodeURIComponent(name)}`, { method: "DELETE", headers: authHeaders() });
   if (!r.ok) throw new Error(await r.text());
   return r.json();
 }
@@ -54,7 +59,7 @@ export function streamChat(
 
   fetch(`${BASE}/chat/stream`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({ query, collection, session_id: sessionId }),
     signal: ctrl.signal,
   })
@@ -118,7 +123,7 @@ export function streamSummary(
 ) {
   const ctrl = new AbortController();
 
-  fetch(`${BASE}/summarize/stream/${collection}`, { signal: ctrl.signal })
+  fetch(`${BASE}/summarize/stream/${collection}`, { signal: ctrl.signal, headers: authHeaders() })
     .then(async (r) => {
       if (!r.ok) { onError(await r.text()); return; }
       const reader = r.body!.getReader();
