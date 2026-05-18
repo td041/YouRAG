@@ -6,6 +6,7 @@ from typing import List, Dict, Optional
 from youtube_transcript_api import YouTubeTranscriptApi
 from pytubefix import YouTube
 
+from src.core.config import settings
 from src.core.logger import logger
 
 
@@ -111,8 +112,61 @@ class YouTubeLoader:
             logger.error(f"Không thể lấy Transcript của {video_id}. Nguyên nhân: {e}")
             return []
 
+    def _transcribe_with_whisper(self, url: str) -> List[Dict]:
+        """Fallback: tải audio và tự chuyển giọng nói → văn bản bằng faster-whisper (local).
+
+        Dùng khi video không có phụ đề (CC) trên YouTube.
+        Model 'base' (~145MB) tự download lần đầu, chạy được trên CPU và GPU.
+        """
+        try:
+            from faster_whisper import WhisperModel  # lazy import
+        except ImportError:
+            raise RuntimeError(
+                "faster-whisper chưa được cài. Chạy: poetry add faster-whisper"
+            )
+
+        import tempfile
+
+        logger.info("🎙️ [Whisper] Không có phụ đề → đang tải audio để tự nhận dạng...")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            yt = YouTube(url)
+            audio_stream = yt.streams.filter(only_audio=True).order_by("abr").last()
+            if not audio_stream:
+                raise ValueError("Không tìm thấy audio stream cho video này.")
+
+            audio_path = audio_stream.download(output_path=tmpdir, filename="audio")
+            logger.info(f"🎙️ [Whisper] Audio đã tải ({audio_stream.abr}), đang transcribe...")
+
+            device = "cuda" if settings.DEVICE == "cuda" else "cpu"
+            compute_type = "float16" if device == "cuda" else "int8"
+
+            model = WhisperModel("base", device=device, compute_type=compute_type)
+            segments, info = model.transcribe(audio_path, beam_size=5)
+
+            logger.info(
+                f"🎙️ [Whisper] Ngôn ngữ phát hiện: {info.language} "
+                f"(confidence: {info.language_probability:.2f})"
+            )
+
+            transcript = []
+            for seg in segments:
+                text = self._clean_text(seg.text)
+                if text:
+                    transcript.append({
+                        "text": text,
+                        "start": round(seg.start, 3),
+                        "duration": round(seg.end - seg.start, 3),
+                    })
+
+        logger.info(f"✅ [Whisper] Transcribe xong: {len(transcript)} đoạn")
+        return transcript
+
     def load_video_data(self, url: str) -> Dict:
-        """Entry point: Fetch metadata + transcript SONG SONG để tối ưu thời gian."""
+        """Entry point: Fetch metadata + transcript SONG SONG để tối ưu thời gian.
+
+        Nếu YouTube không có phụ đề → tự động fallback sang faster-whisper (local STT).
+        """
         video_id = self.extract_video_id(url)
         if not video_id:
             raise ValueError(f"URL YouTube không hợp lệ: {url}")
@@ -128,10 +182,23 @@ class YouTubeLoader:
             metadata = future_meta.result(timeout=60)
             raw_transcript = future_transcript.result(timeout=60)
 
+        # Whisper fallback khi YouTube không có phụ đề
+        if not raw_transcript:
+            logger.warning(
+                f"⚠️ Video {video_id} không có phụ đề. Thử Whisper fallback..."
+            )
+            try:
+                raw_transcript = self._transcribe_with_whisper(url)
+            except Exception as whisper_err:
+                logger.error(f"❌ Whisper fallback thất bại: {whisper_err}")
+                raise ValueError(
+                    f"Không tìm thấy transcript cho video {video_id} và Whisper cũng thất bại: "
+                    f"{whisper_err}. Đảm bảo faster-whisper đã được cài đặt."
+                )
+
         if not raw_transcript:
             raise ValueError(
-                f"Không tìm thấy Transcript (Phụ đề) nào cho video {video_id}. "
-                "Video có thể đã tắt phụ đề hoặc là video live stream."
+                f"Không thể lấy transcript cho video {video_id} bằng bất kỳ phương thức nào."
             )
 
         return {

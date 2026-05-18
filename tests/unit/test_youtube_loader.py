@@ -211,14 +211,15 @@ def test_load_video_data_success(loader):
 
 
 def test_load_video_data_raises_on_empty_transcript(loader):
-    """Kiểm tra raise ValueError khi transcript trống."""
+    """Kiểm tra raise ValueError khi cả transcript API lẫn Whisper đều thất bại."""
     url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
 
     with patch.object(loader, "fetch_metadata") as mock_meta, \
-         patch.object(loader, "fetch_transcript") as mock_trans:
+         patch.object(loader, "fetch_transcript") as mock_trans, \
+         patch.object(loader, "_transcribe_with_whisper", side_effect=RuntimeError("whisper fail")):
         mock_meta.return_value = {"title": "Vid"}
-        mock_trans.return_value = []  # Empty transcript
+        mock_trans.return_value = []  # YouTube không có transcript
 
-        with pytest.raises(ValueError, match="Không tìm thấy Transcript"):
+        with pytest.raises(ValueError, match="Không tìm thấy transcript"):
             loader.load_video_data(url)
 

@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     # 2. Quản Lý Chìa Khóa (Secrets Vault) - Ẩn giấu khi Print
     OPENAI_API_KEY: Optional[SecretStr] = None
     GROQ_API_KEY: Optional[SecretStr] = None
+    JINA_API_KEY: Optional[SecretStr] = None  # Late Chunking (jina-embeddings-v3)
 
     # 3. Vector Database Engine (QDRANT VƯƠNG GIẢ)
     QDRANT_DB_PATH: str = "qdrant_db"

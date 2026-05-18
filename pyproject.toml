@@ -30,6 +30,7 @@ sqlmodel = "^0.0.18"
 sqlalchemy = "^2.0.0"
 psycopg2-binary = "^2.9.9"
 networkx = ">=3.0"
+faster-whisper = ">=1.0.3"
 
 [tool.poetry.group.evaluation.dependencies]
 zenml = {extras = ["server"], version = "^0.94.0"}

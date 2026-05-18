@@ -1,5 +1,5 @@
 import re
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 try:
@@ -245,7 +245,11 @@ def _run_graph_extraction(chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return results
 
 
-def _run_save_to_qdrant(raw_data: Dict[str, Any], final_chunks: List[Dict[str, Any]]) -> Dict[str, Any]:
+def _run_save_to_qdrant(
+    raw_data: Dict[str, Any],
+    final_chunks: List[Dict[str, Any]],
+    precomputed_embeddings: Optional[List] = None,
+) -> Dict[str, Any]:
     import uuid
     from qdrant_client.http import models
 
@@ -262,7 +266,12 @@ def _run_save_to_qdrant(raw_data: Dict[str, Any], final_chunks: List[Dict[str, A
 
     docs = [c["content"] for c in final_chunks]
     metas = [c["metadata"] for c in final_chunks]
-    embeddings = db_instance.embedding_model.encode(docs, show_progress_bar=True)
+
+    if precomputed_embeddings is not None:
+        logger.info("[Step 4] Dùng Late Chunking embeddings (Jina context-aware)")
+        embeddings = precomputed_embeddings
+    else:
+        embeddings = db_instance.embedding_model.encode(docs, show_progress_bar=True)
 
     points = []
     for i, (doc, meta, emb) in enumerate(zip(docs, metas, embeddings)):
@@ -297,8 +306,13 @@ def _run_save_to_qdrant(raw_data: Dict[str, Any], final_chunks: List[Dict[str, A
 # 🛡️ BACKWARD-COMPATIBLE WRAPPER FOR FASTAPI / STREAMLIT
 # -------------------------------------------------------------------
 class IngestionPipeline:
-    def __init__(self, use_contextual_enrichment: bool = False):
+    def __init__(
+        self,
+        use_contextual_enrichment: bool = False,
+        use_late_chunking: bool = False,
+    ):
         self.use_contextual_enrichment = use_contextual_enrichment
+        self.use_late_chunking = use_late_chunking
 
     def run(self, youtube_url: str, force_reingest: bool = False) -> Dict:
         import time
@@ -314,16 +328,35 @@ class IngestionPipeline:
         final_chunks = _run_graph_extraction(chunks)
         t3 = time.time()
 
-        result = _run_save_to_qdrant(raw_data, final_chunks)
+        # Late Chunking: dùng Jina context-aware embeddings thay bge-m3 per-chunk
+        precomputed_embeddings = None
+        if self.use_late_chunking:
+            try:
+                from src.engine.ingestion.late_chunker import LateChunkingEmbedder
+                embedder = LateChunkingEmbedder()
+                texts = [c["content"] for c in final_chunks]
+                precomputed_embeddings = embedder.embed_chunks(texts)
+                logger.info("[LateChunking] ✅ Embeddings context-aware đã sẵn sàng")
+            except Exception as e:
+                logger.warning(f"[LateChunking] Thất bại, fallback về bge-m3: {e}")
+                precomputed_embeddings = None
         t4 = time.time()
 
+        result = _run_save_to_qdrant(raw_data, final_chunks, precomputed_embeddings)
+        t5 = time.time()
+
+        result["late_chunking_used"] = precomputed_embeddings is not None
         result["latency"] = {
             "extract_s": round(t1 - t0, 2),
             "chunk_s": round(t2 - t1, 2),
             "graph_s": round(t3 - t2, 2),
-            "load_s": round(t4 - t3, 2),
-            "total_s": round(t4 - t0, 2),
+            "embed_s": round(t4 - t3, 2),
+            "load_s": round(t5 - t4, 2),
+            "total_s": round(t5 - t0, 2),
         }
 
-        logger.info(f"✅ INGESTION COMPLETED in {result['latency']['total_s']}s — {result['chunks_added']} chunks → [{result['collection_name']}]")
+        logger.info(
+            f"✅ INGESTION COMPLETED in {result['latency']['total_s']}s — "
+            f"{result['chunks_added']} chunks → [{result['collection_name']}]"
+        )
         return result

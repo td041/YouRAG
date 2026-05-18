@@ -117,16 +117,30 @@ class RAGASEvaluator:
     # ------------------------------------------------------------------
 
     def _build_ragas_llm(self) -> Any:
-        """Tạo Groq-backed LLM cho RAGAS thông qua OpenAI-compatible API."""
+        """Tạo Groq-backed LLM cho RAGAS.
+
+        Groq Free Tier không hỗ trợ n>1 — dùng subclass để hard-cap n=1
+        bất kể RAGAS có bind(n=3) hay không.
+        """
         from langchain_openai import ChatOpenAI
+        from langchain_core.runnables import Runnable
         from ragas.llms import LangchainLLMWrapper
+        from typing import Any as AnyType
 
         groq_key = (
             settings.GROQ_API_KEY.get_secret_value()
             if settings.GROQ_API_KEY
             else os.getenv("GROQ_API_KEY", "")
         )
-        llm = ChatOpenAI(
+
+        class _GroqSafeLLM(ChatOpenAI):
+            """ChatOpenAI subclass: always forces n=1 for Groq Free Tier compatibility."""
+
+            def bind(self, **kwargs: AnyType) -> Runnable:
+                kwargs.pop("n", None)  # Strip n — Groq rejects n>1
+                return super().bind(**kwargs)
+
+        llm = _GroqSafeLLM(
             model="llama-3.1-8b-instant",
             openai_api_key=groq_key,
             openai_api_base="https://api.groq.com/openai/v1",

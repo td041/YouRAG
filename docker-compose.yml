@@ -68,6 +68,7 @@ services:
     environment:
       - QDRANT_SERVER_URL=http://qdrant:6333
       - GROQ_API_KEY=${GROQ_API_KEY}
+      - JINA_API_KEY=${JINA_API_KEY:-}
       - DEVICE=cuda
       - REDIS_URL=redis://redis:6379/0
       - DATABASE_URL=postgresql://yourag_user:yourag_pass@postgres:5432/yourag_db
