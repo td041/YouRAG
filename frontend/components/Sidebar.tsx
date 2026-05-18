@@ -52,9 +52,11 @@ export default function Sidebar({ collections, selected, apiOnline, onSelect, on
     e.preventDefault();
     if (!url.trim()) return;
     setStatus("loading");
-    setStatusMsg("");
+    setStatusMsg("Đang xếp hàng...");
     try {
-      const d = await ingestVideo(url.trim(), useCtx);
+      const d = await ingestVideo(url.trim(), useCtx, false, (s) => {
+        setStatusMsg(s === "running" ? "Đang xử lý..." : s);
+      });
       setStatus("ok");
       setStatusMsg(`${d.chunks_added ?? "?"} chunks indexed`);
       setUrl("");

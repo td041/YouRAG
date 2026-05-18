@@ -1,8 +1,8 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, Dict as TypingDict
 import os
 import sys
 import uuid
@@ -78,6 +78,7 @@ async def startup_event():
 class IngestRequest(BaseModel):
     url: str
     use_contextual: bool = False
+    use_late_chunking: bool = False  # Jina Late Chunking (cần JINA_API_KEY)
 
 class ChatRequest(BaseModel):
     query: str
@@ -92,12 +93,35 @@ class ChatRequest(BaseModel):
 def read_root():
     return {"status": "online", "message": "YouRAG API is ready."}
 
+# Collections dùng nội bộ — không hiển thị trong library
+_INTERNAL_COLLECTIONS = {"semantic_cache"}
+
+# Job store cho async ingest (in-memory, đủ cho single-node deployment)
+_ingest_jobs: TypingDict[str, dict] = {}
+
+
+def _run_ingest_job(job_id: str, url: str, use_contextual: bool, use_late_chunking: bool) -> None:
+    """Background task: chạy ingest và cập nhật trạng thái job."""
+    _ingest_jobs[job_id]["status"] = "running"
+    try:
+        pipeline = IngestionPipeline(
+            use_contextual_enrichment=use_contextual,
+            use_late_chunking=use_late_chunking,
+        )
+        result = pipeline.run(url)
+        _ingest_jobs[job_id].update({"status": "done", "result": result})
+    except Exception as e:
+        logger.error(f"[IngestJob {job_id}] failed: {e}")
+        _ingest_jobs[job_id].update({"status": "error", "error": str(e)})
+
 @app.get("/collections")
 def list_collections():
     collections_response = db_instance.client.get_collections()
     detailed_collections = []
 
     for c in collections_response.collections:
+        if c.name in _INTERNAL_COLLECTIONS:
+            continue
         try:
             records, _ = db_instance.client.scroll(
                 collection_name=c.name,
@@ -140,13 +164,23 @@ async def delete_collection(collection_name: str):
 
 
 @app.post("/ingest")
-async def ingest_video(req: IngestRequest):
-    try:
-        AIStore.pipeline.use_contextual_enrichment = req.use_contextual
-        result = AIStore.pipeline.run(req.url)
-        return result
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+async def ingest_video(req: IngestRequest, background_tasks: BackgroundTasks):
+    """Khởi động ingest video bất đồng bộ. Trả về job_id để theo dõi tiến độ."""
+    job_id = str(uuid.uuid4())
+    _ingest_jobs[job_id] = {"status": "queued", "url": req.url}
+    background_tasks.add_task(
+        _run_ingest_job, job_id, req.url, req.use_contextual, req.use_late_chunking
+    )
+    return {"job_id": job_id, "status": "queued"}
+
+
+@app.get("/ingest/status/{job_id}")
+def ingest_status(job_id: str):
+    """Kiểm tra trạng thái job ingest: queued → running → done / error."""
+    job = _ingest_jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job không tồn tại")
+    return job
 
 @app.post("/graph/build/{collection}")
 async def build_graph(collection: str):

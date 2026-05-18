@@ -56,12 +56,14 @@ def test_list_collections(mocker):
 
 
 def test_ingest_video(mock_aistore):
-    """Kiểm tra endpoint ingest."""
-    mock_aistore.pipeline.run.return_value = {"status": "success"}
-    
+    """Kiểm tra endpoint ingest trả về job_id (async)."""
+    mock_aistore.pipeline.run.return_value = {"status": "success", "chunks_added": 10}
+
     response = client.post("/ingest", json={"url": "https://youtube.com/watch?v=123"})
     assert response.status_code == 200
-    assert response.json()["status"] == "success"
+    data = response.json()
+    assert "job_id" in data
+    assert data["status"] == "queued"
 
 
 def test_chat_rag_cache_hit(mock_aistore):

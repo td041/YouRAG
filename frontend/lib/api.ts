@@ -6,14 +6,31 @@ export async function fetchCollections() {
   return r.json();
 }
 
-export async function ingestVideo(url: string, useContextual: boolean) {
+export async function ingestVideo(
+  url: string,
+  useContextual: boolean,
+  useLateChunking = false,
+  onProgress?: (status: string) => void,
+) {
+  // Kick off async job
   const r = await fetch(`${BASE}/ingest`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ url, use_contextual: useContextual }),
+    body: JSON.stringify({ url, use_contextual: useContextual, use_late_chunking: useLateChunking }),
   });
   if (!r.ok) throw new Error(await r.text());
-  return r.json();
+  const { job_id } = await r.json();
+
+  // Poll until done or error
+  while (true) {
+    await new Promise((res) => setTimeout(res, 2000));
+    const s = await fetch(`${BASE}/ingest/status/${job_id}`);
+    if (!s.ok) throw new Error("Không thể kiểm tra trạng thái ingest");
+    const job = await s.json();
+    onProgress?.(job.status);
+    if (job.status === "done") return job.result;
+    if (job.status === "error") throw new Error(job.error ?? "Ingest thất bại");
+  }
 }
 
 export async function deleteCollection(name: string) {
