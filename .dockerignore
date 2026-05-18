@@ -1,23 +1,48 @@
-# ── Loại trừ để giảm build context (không copy vào Docker image) ────────────
+# ── Version control ──────────────────────────────────────────────────────────
 .git
 .github
-.pytest_cache
-.ruff_cache
+.gitignore
+
+# ── Python artifacts ─────────────────────────────────────────────────────────
 .venv
-.cache
-
-# Model cache — KHÔNG bake vào image, dùng volume mount từ host
-# Xem docker-compose.yml: volumes ~/.cache/huggingface
-~/.cache
-
-# Dữ liệu runtime — không cần trong image
-qdrant_db/
-graph_store/
-tests/benchmark/
-
-# Dev files
-*.log
-*.tmp
-node_modules/
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# ── Model / data cache — dùng volume mount từ host ────────────────────────────
+.cache/
+~/.cache
+qdrant_db/
+graph_store/
+
+# ── Tests & docs — không cần trong runtime image ─────────────────────────────
+tests/
+docs/
+*.md
+!src/**/*.md
+
+# ── Frontend — build riêng, không copy vào backend image ─────────────────────
+frontend/
+
+# ── Dev / IDE ─────────────────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+*.log
+*.tmp
+.DS_Store
+.idea/
+.vscode/
+
+# ── Node (phòng trường hợp có node_modules trong root) ───────────────────────
+node_modules/

@@ -1,0 +1,13 @@
+# Không copy node_modules vào build context — npm ci sẽ cài lại trong builder stage
+node_modules/
+.next/
+
+# Dev / IDE
+.env
+.env.*
+!.env.example
+.DS_Store
+.idea/
+.vscode/
+*.log
+*.tmp

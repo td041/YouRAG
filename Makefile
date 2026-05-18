@@ -20,6 +20,11 @@ help:
 	@echo "  make lint         — Kiểm tra code"
 	@echo "  make clean        — Xóa containers"
 	@echo "  make clean-all    — Xóa tất cả kể cả data ⚠️"
+	@echo ""
+	@echo "🧑‍💻 DEV MODE (Khuyên dùng):"
+	@echo "  make dev-db       — Chỉ bật Database (Qdrant, Postgres, Redis) bằng Docker"
+	@echo "  make dev-backend  — Chạy Backend ở máy thật (có tự động reload code)"
+	@echo "  make dev-frontend — Chạy Frontend ở máy thật"
 
 setup:
 	@[ -f .env ] && echo ".env đã tồn tại." || (cp .env.example .env && echo "✅ Đã tạo .env — điền GROQ_API_KEY vào!")
@@ -30,6 +35,18 @@ build:
 up:
 	$(DC) up -d
 	@echo "✅ Backend: http://localhost:8000 | Frontend: http://localhost:3000 | Docs: http://localhost:8000/docs"
+
+# ─── MÔI TRƯỜNG LẬP TRÌNH (DEV MODE) ──────────────────────────────
+dev-db:
+	$(DC) up -d postgres qdrant redis
+	@echo "✅ Đã bật Database nội bộ. Chạy 'make dev-backend' ở tab mới nhé!"
+
+dev-backend:
+	poetry run uvicorn src.api.main:app --reload --host 0.0.0.0 --port 8000
+
+dev-frontend:
+	cd frontend && npm run dev
+# ──────────────────────────────────────────────────────────────────
 
 down:
 	$(DC) down
