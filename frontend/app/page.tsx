@@ -13,6 +13,7 @@ export default function Home() {
   const [selected, setSelected] = useState<Collection | null>(null);
   const [apiOnline, setApiOnline] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [seekTime, setSeekTime] = useState<number | undefined>();
 
   const loadCollections = useCallback(async () => {
     try {
@@ -41,6 +42,10 @@ export default function Home() {
           apiOnline={apiOnline}
           onSelect={setSelected}
           onIngested={loadCollections}
+          onDeleted={(name) => {
+            setCollections(prev => prev.filter(c => c.name !== name));
+            if (selected?.name === name) setSelected(null);
+          }}
         />
       </div>
 
@@ -102,12 +107,12 @@ export default function Home() {
             <>
               {/* Left Pane: Video Insight */}
               <div className="hidden lg:flex flex-col w-[45%] xl:w-[40%] border-r border-white/[0.04]">
-                <VideoPanel collection={selected} />
+                <VideoPanel collection={selected} seekTime={seekTime} />
               </div>
 
               {/* Right Pane: AI Chat Interface */}
               <div className="flex-1 flex flex-col min-w-0">
-                <ChatPanel collection={selected} />
+                <ChatPanel collection={selected} onSourceClick={setSeekTime} />
               </div>
             </>
           )}

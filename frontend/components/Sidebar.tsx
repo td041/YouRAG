@@ -2,10 +2,10 @@
 
 import { useState } from "react";
 import { Collection } from "@/lib/types";
-import { ingestVideo } from "@/lib/api";
+import { ingestVideo, deleteCollection } from "@/lib/api";
 import {
   Plus, Library, Loader2, CheckCircle2,
-  XCircle, 
+  XCircle, Trash2,
   Search, Sparkles, Globe
 } from "lucide-react";
 
@@ -24,13 +24,29 @@ interface Props {
   apiOnline: boolean;
   onSelect: (c: Collection) => void;
   onIngested: () => void;
+  onDeleted: (name: string) => void;
 }
 
-export default function Sidebar({ collections, selected, apiOnline, onSelect, onIngested }: Props) {
+export default function Sidebar({ collections, selected, apiOnline, onSelect, onIngested, onDeleted }: Props) {
   const [url, setUrl] = useState("");
   const [useCtx, setUseCtx] = useState(false);
   const [status, setStatus] = useState<"idle" | "loading" | "ok" | "error">("idle");
   const [statusMsg, setStatusMsg] = useState("");
+  const [deletingName, setDeletingName] = useState<string | null>(null);
+
+  async function handleDelete(e: React.MouseEvent, name: string) {
+    e.stopPropagation();
+    if (!confirm(`Xóa video "${name}" khỏi thư viện?`)) return;
+    setDeletingName(name);
+    try {
+      await deleteCollection(name);
+      onDeleted(name);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDeletingName(null);
+    }
+  }
 
   async function handleIngest(e: React.FormEvent) {
     e.preventDefault();
@@ -187,6 +203,16 @@ export default function Sidebar({ collections, selected, apiOnline, onSelect, on
                       Source: YouTube
                     </p>
                   </div>
+                  <button
+                    onClick={(e) => handleDelete(e, c.name)}
+                    disabled={deletingName === c.name}
+                    className="shrink-0 opacity-0 group-hover:opacity-100 p-1.5 rounded-lg hover:bg-rose-500/10 text-slate-600 hover:text-rose-400 transition-all"
+                    title="Xóa video"
+                  >
+                    {deletingName === c.name
+                      ? <Loader2 size={13} className="animate-spin" />
+                      : <Trash2 size={13} />}
+                  </button>
                 </div>
               </button>
             ))

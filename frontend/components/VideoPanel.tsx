@@ -19,9 +19,10 @@ function YouTubeLogo({ size = 16 }: { size?: number }) {
 
 interface Props {
   collection: Collection | null;
+  seekTime?: number;
 }
 
-export default function VideoPanel({ collection }: Props) {
+export default function VideoPanel({ collection, seekTime }: Props) {
   const [summary, setSummary] = useState("");
   const [streaming, setStreaming] = useState(false);
 
@@ -68,7 +69,8 @@ export default function VideoPanel({ collection }: Props) {
               <div className="relative w-full rounded-2xl overflow-hidden border border-white/[0.08] bg-black shadow-2xl"
                    style={{ aspectRatio: "16/9" }}>
                 <iframe
-                  src={`https://www.youtube.com/embed/${collection.video_id}?rel=0&modestbranding=1&autoplay=0`}
+                  key={seekTime !== undefined ? `iframe-seek-${seekTime}` : `iframe-${collection.video_id}`}
+                  src={`https://www.youtube.com/embed/${collection.video_id}?rel=0&modestbranding=1&autoplay=${seekTime !== undefined ? 1 : 0}${seekTime !== undefined ? `&start=${Math.floor(seekTime)}` : ''}`}
                   title={collection.title}
                   allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                   allowFullScreen
