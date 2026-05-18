@@ -18,8 +18,10 @@ class Settings(BaseSettings):
     ENVIRONMENT: Literal["development", "staging", "production"] = "development"
 
     # 2. Quản Lý Chìa Khóa (Secrets Vault) - Ẩn giấu khi Print
+    API_KEY: Optional[SecretStr] = None  # Bearer token bảo vệ các endpoint write
     OPENAI_API_KEY: Optional[SecretStr] = None
     GROQ_API_KEY: Optional[SecretStr] = None
+    GEMINI_API_KEY: Optional[SecretStr] = None  # Fallback khi Groq rate limit
     JINA_API_KEY: Optional[SecretStr] = None  # Late Chunking (jina-embeddings-v3)
 
     # 3. Vector Database Engine (QDRANT VƯƠNG GIẢ)

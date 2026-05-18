@@ -13,6 +13,10 @@ with patch("src.engine.ingestion.pipeline.IngestionPipeline"), \
      patch("src.cache.semantic_cache.SemanticCache"), \
      patch("src.core.postgres.init_db"):
     from src.api.main import app, AIStore
+    from src.api.auth import require_api_key
+
+# Override auth để không cần API key trong tests
+app.dependency_overrides[require_api_key] = lambda: ""
 
 client = TestClient(app)
 
@@ -169,7 +173,81 @@ def test_get_chat_history_endpoint(mocker):
 def test_summarize_stream_endpoint(mock_aistore):
     """Kiểm tra endpoint summarize stream."""
     mock_aistore.summarizer.summarize_stream.return_value = iter(["Summary", " chunk"])
-    
+
     response = client.get("/summarize/stream/test_col")
     assert response.status_code == 200
     assert "Summary chunk" in response.text
+
+
+# ─────────────────────────────────────────────
+# AUTH TESTS
+# ─────────────────────────────────────────────
+
+def test_auth_no_key_when_not_configured():
+    """Khi API_KEY chưa cấu hình → dev mode, không cần key."""
+    from src.api import auth as auth_module
+    # Simulate no key configured
+    with patch.object(auth_module.settings, "API_KEY", None):
+        from src.api.auth import require_api_key as _rk
+        result = _rk(key=None)
+        assert result == ""
+
+
+def test_auth_valid_key():
+    """Key đúng → trả về key."""
+    from unittest.mock import MagicMock
+    from src.api import auth as auth_module
+    mock_secret = MagicMock()
+    mock_secret.get_secret_value.return_value = "secret123"
+    with patch.object(auth_module.settings, "API_KEY", mock_secret):
+        from src.api.auth import require_api_key as _rk
+        result = _rk(key="secret123")
+        assert result == "secret123"
+
+
+def test_auth_invalid_key():
+    """Key sai → 401."""
+    from fastapi import HTTPException
+    from unittest.mock import MagicMock
+    from src.api import auth as auth_module
+    mock_secret = MagicMock()
+    mock_secret.get_secret_value.return_value = "secret123"
+    with patch.object(auth_module.settings, "API_KEY", mock_secret):
+        from src.api.auth import require_api_key as _rk
+        with pytest.raises(HTTPException) as exc_info:
+            _rk(key="wrong")
+        assert exc_info.value.status_code == 401
+
+
+def test_protected_endpoint_returns_401_without_key():
+    """Endpoint được bảo vệ → 401 khi thiếu key (restore override)."""
+    from unittest.mock import MagicMock
+    from src.api import auth as auth_module
+    mock_secret = MagicMock()
+    mock_secret.get_secret_value.return_value = "secret123"
+
+    # Remove override tạm thời để test thật
+    app.dependency_overrides.pop(require_api_key, None)
+    try:
+        with patch.object(auth_module.settings, "API_KEY", mock_secret):
+            response = client.get("/summarize/test_col")
+            assert response.status_code == 401
+    finally:
+        app.dependency_overrides[require_api_key] = lambda: ""
+
+
+def test_protected_endpoint_returns_200_with_valid_key(mock_aistore):
+    """Endpoint được bảo vệ → 200 khi có đúng key."""
+    from unittest.mock import MagicMock
+    from src.api import auth as auth_module
+    mock_secret = MagicMock()
+    mock_secret.get_secret_value.return_value = "secret123"
+    mock_aistore.summarizer.summarize.return_value = "summary"
+
+    app.dependency_overrides.pop(require_api_key, None)
+    try:
+        with patch.object(auth_module.settings, "API_KEY", mock_secret):
+            response = client.get("/summarize/test_col", headers={"X-API-Key": "secret123"})
+            assert response.status_code == 200
+    finally:
+        app.dependency_overrides[require_api_key] = lambda: ""
