@@ -2,7 +2,6 @@
 
 import json
 import os
-import pickle
 import pytest
 from unittest.mock import MagicMock
 
@@ -105,8 +104,8 @@ def test_build_graph_creates_nodes_and_edges(mock_graph_deps, tmp_path, mocker):
     assert G.has_node("Python")
     assert G.has_node("Programming Language")
 
-    # Verify pickle file was saved
-    assert os.path.exists(tmp_path / "test_col.gpickle")
+    # Verify JSON file was saved (replaced pickle to avoid RCE risk)
+    assert os.path.exists(tmp_path / "test_col.json")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -125,12 +124,13 @@ def _build_sample_graph():
 
 
 def test_load_graph_from_disk(mock_graph_deps, tmp_path, mocker):
-    """Kiểm tra load graph từ pickle file."""
+    """Kiểm tra load graph từ JSON file."""
     mocker.patch.object(GraphRetriever, "GRAPH_DIR", str(tmp_path))
 
     G = _build_sample_graph()
-    with open(tmp_path / "test_col.gpickle", "wb") as f:
-        pickle.dump(G, f)
+    graph_data = {"graph": nx.node_link_data(G), "triples": []}
+    with open(tmp_path / "test_col.json", "w", encoding="utf-8") as f:
+        json.dump(graph_data, f)
 
     retriever = GraphRetriever()
     loaded = retriever._load_graph("test_col")
@@ -154,8 +154,9 @@ def test_load_graph_caches(mock_graph_deps, tmp_path, mocker):
     mocker.patch.object(GraphRetriever, "GRAPH_DIR", str(tmp_path))
 
     G = _build_sample_graph()
-    with open(tmp_path / "cached_col.gpickle", "wb") as f:
-        pickle.dump(G, f)
+    graph_data = {"graph": nx.node_link_data(G), "triples": []}
+    with open(tmp_path / "cached_col.json", "w", encoding="utf-8") as f:
+        json.dump(graph_data, f)
 
     retriever = GraphRetriever()
     g1 = retriever._load_graph("cached_col")
@@ -231,8 +232,9 @@ def test_search_full_pipeline(mock_graph_deps, tmp_path, mocker):
     mocker.patch.object(GraphRetriever, "GRAPH_DIR", str(tmp_path))
 
     G = _build_sample_graph()
-    with open(tmp_path / "search_col.gpickle", "wb") as f:
-        pickle.dump(G, f)
+    graph_data = {"graph": nx.node_link_data(G), "triples": []}
+    with open(tmp_path / "search_col.json", "w", encoding="utf-8") as f:
+        json.dump(graph_data, f)
 
     retriever = GraphRetriever()
     result = retriever.search("Python là gì?", "search_col")
@@ -260,8 +262,9 @@ def test_get_graph_summary(mock_graph_deps, tmp_path, mocker):
     mocker.patch.object(GraphRetriever, "GRAPH_DIR", str(tmp_path))
 
     G = _build_sample_graph()
-    with open(tmp_path / "sum_col.gpickle", "wb") as f:
-        pickle.dump(G, f)
+    graph_data = {"graph": nx.node_link_data(G), "triples": []}
+    with open(tmp_path / "sum_col.json", "w", encoding="utf-8") as f:
+        json.dump(graph_data, f)
 
     retriever = GraphRetriever()
     summary = retriever.get_graph_summary("sum_col")

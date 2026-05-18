@@ -145,7 +145,7 @@ def test_generate_returns_error_string_on_exception(mock_llm_client, mock_semant
 
 def test_generate_returns_cached_answer_on_hit(mock_llm_client, mock_semantic_cache):
     """Kiểm tra generate trả về câu trả lời từ cache nếu có hit, và không gọi LLM."""
-    mock_semantic_cache.check_cache.return_value = "Cached answer"
+    mock_semantic_cache.check_cache.return_value = {"answer": "Cached answer", "sources": [], "facts": []}
 
     generator = AnswerGenerator()
     result = generator.generate(query="hello", retrieved_chunks=[])

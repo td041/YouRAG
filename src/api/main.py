@@ -237,7 +237,7 @@ async def chat_rag(req: ChatRequest):
         try:
             sq_list = AIStore.generator.llm.chat_complete(sq_prompt, system="Bạn là trợ lý RAG.", max_tokens=100)
             suggestions = [s.strip() for s in sq_list.replace('\n', '').split("|") if s.strip()]
-        except:
+        except Exception:
             suggestions = []
 
         return {

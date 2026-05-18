@@ -88,12 +88,25 @@ def test_step_save_to_qdrantdb(mock_db, mocker):
 
 
 def test_ingestion_pipeline_wrapper(mocker):
-    """Kiểm tra lớp wrapper IngestionPipeline (cho FastAPI)."""
-    # Mock the ZenML pipeline call to avoid real ZenML execution
-    mocker.patch("src.engine.ingestion.pipeline.zenml_ingestion_pipeline")
-    
+    """Kiểm tra lớp wrapper IngestionPipeline gọi đúng các bước và trả về kết quả."""
+    fake_raw = {"metadata": {"video_id": "abc123", "title": "Test Video"}, "transcript": []}
+    fake_chunks = [{"content": "chunk1", "metadata": {"start_time": 0.0}}]
+    fake_result = {
+        "status": "success",
+        "video_id": "abc123",
+        "title": "Test Video",
+        "collection_name": "test-col",
+        "chunks_added": 1,
+        "total_in_db": 1,
+    }
+
+    mocker.patch("src.engine.ingestion.pipeline._run_extract_video", return_value=fake_raw)
+    mocker.patch("src.engine.ingestion.pipeline._run_semantic_chunking", return_value=fake_chunks)
+    mocker.patch("src.engine.ingestion.pipeline._run_graph_extraction", return_value=fake_chunks)
+    mocker.patch("src.engine.ingestion.pipeline._run_save_to_qdrant", return_value=fake_result)
+
     pipeline = IngestionPipeline(use_contextual_enrichment=True)
-    result = pipeline.run("https://youtube.com/v123")
-    
+    result = pipeline.run("https://www.youtube.com/watch?v=abc123")
+
     assert result["status"] == "success"
-    assert result["video_id"] == "Processed_By_ZenML"
+    assert result["video_id"] == "abc123"

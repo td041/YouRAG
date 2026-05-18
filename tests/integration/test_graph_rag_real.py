@@ -49,13 +49,10 @@ def setup_and_teardown():
         print(f"Lỗi khi xóa collection: {e}")
         
     builder = KnowledgeGraphBuilder()
-    graph_path = os.path.join(builder.GRAPH_DIR, f"{TEST_COLLECTION}.gpickle")
-    triples_path = os.path.join(builder.GRAPH_DIR, f"{TEST_COLLECTION}_triples.json")
-    
+    graph_path = os.path.join(builder.GRAPH_DIR, f"{TEST_COLLECTION}.json")
+
     if os.path.exists(graph_path):
         os.remove(graph_path)
-    if os.path.exists(triples_path):
-        os.remove(triples_path)
         
     # Xóa bộ nhớ đệm
     retriever = GraphRetriever()
@@ -76,7 +73,7 @@ def test_real_graph_rag_pipeline():
     assert G.number_of_nodes() > 0, "Đồ thị không được rỗng, LLM phải trích xuất được ít nhất 1 node."
     
     # Kiểm tra xem file lưu xuống ổ cứng chưa
-    graph_path = os.path.join(builder.GRAPH_DIR, f"{TEST_COLLECTION}.gpickle")
+    graph_path = os.path.join(builder.GRAPH_DIR, f"{TEST_COLLECTION}.json")
     assert os.path.exists(graph_path), f"File đồ thị chưa được lưu tại {graph_path}"
 
     print(f"\n[TEST] -> LLM đã tạo ra {G.number_of_nodes()} nodes và {G.number_of_edges()} edges.")
