@@ -48,7 +48,8 @@ class AnswerGenerator:
 
         cached = self.cache.check_cache(query)
         if cached is not None:
-            return cached
+            logger.info(f"[AnswerGenerator] Cache hit for query: '{query[:60]}'")
+            return cached["answer"]
 
         context_str = self._build_context_string(retrieved_chunks)
         

@@ -2,7 +2,18 @@ import re
 from typing import Dict, List, Any
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from zenml import step, pipeline
+try:
+    from zenml import step, pipeline
+    _ZENML_AVAILABLE = True
+except ImportError:
+    # ZenML không được cài trong production image — dùng direct runner
+    _ZENML_AVAILABLE = False
+    def step(fn=None, **_kwargs):
+        """No-op decorator khi zenml không có."""
+        return fn if fn is not None else lambda f: f
+    def pipeline(fn=None, **_kwargs):
+        return fn if fn is not None else lambda f: f
+
 from src.engine.ingestion.youtube_loader import YouTubeLoader
 from src.engine.ingestion.chunker import SemanticChunker
 from src.engine.ingestion.graph_extractor import GraphExtractor
@@ -182,37 +193,137 @@ def zenml_ingestion_pipeline(youtube_url: str, use_contextual: bool):
 
 
 # -------------------------------------------------------------------
+# 🏃 DIRECT RUNNER HELPERS (bypass ZenML for local/API use)
+# -------------------------------------------------------------------
+
+def _run_extract_video(youtube_url: str) -> Dict[str, Any]:
+    logger.info(f"🎥 [Step 1] Loading video: {youtube_url}")
+    loader = YouTubeLoader()
+    return loader.load_video_data(youtube_url)
+
+
+def _run_semantic_chunking(raw_data: Dict[str, Any], use_contextual: bool) -> List[Dict[str, Any]]:
+    logger.info("🔪 [Step 2] Semantic Chunking...")
+    llm_client = None
+    if use_contextual:
+        try:
+            from src.engine.generation.llm_client import LLMClient
+            llm_client = LLMClient()
+        except Exception as e:
+            logger.warning(f"LLMClient init failed: {e}")
+
+    chunker = SemanticChunker(
+        percentile_threshold=15,
+        pause_threshold_sec=1.5,
+        min_chars_per_chunk=200,
+        max_chars_per_chunk=2000,
+        llm_client=llm_client,
+    )
+    chunks = chunker.chunk_document(raw_data["metadata"], raw_data["transcript"])
+
+    if use_contextual and llm_client:
+        enricher = ContextualEnricher(max_workers=5, llm_client=llm_client)
+        full_text = " ".join(r["text"] for r in raw_data["transcript"])
+        chunks = enricher.enrich(full_text, chunks)
+
+    return chunks
+
+
+def _run_graph_extraction(chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    logger.info("🕸️ [Step 3] Graph Extraction...")
+    extractor = GraphExtractor()
+    results = [None] * len(chunks)
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        future_to_idx = {executor.submit(extractor.process_chunk, c): i for i, c in enumerate(chunks)}
+        for future in as_completed(future_to_idx):
+            idx = future_to_idx[future]
+            try:
+                results[idx] = future.result()
+            except Exception as e:
+                logger.warning(f"GraphExtractor error: {e}")
+                results[idx] = chunks[idx]
+    return results
+
+
+def _run_save_to_qdrant(raw_data: Dict[str, Any], final_chunks: List[Dict[str, Any]]) -> Dict[str, Any]:
+    import uuid
+    from qdrant_client.http import models
+
+    logger.info("💾 [Step 4] Upserting to Qdrant...")
+    video_id = raw_data["metadata"]["video_id"]
+    title = raw_data["metadata"].get("title", "unknown")
+
+    col_name = re.sub(r'[^a-z0-9]', '-', title.lower())
+    col_name = re.sub(r'-+', '-', col_name).strip('-')
+    if len(col_name) < 3:
+        col_name = col_name.ljust(3, 'a')
+    col_name = col_name[:63].strip('-')
+    col_name = db_instance.get_or_create_collection(col_name)
+
+    docs = [c["content"] for c in final_chunks]
+    metas = [c["metadata"] for c in final_chunks]
+    embeddings = db_instance.embedding_model.encode(docs, show_progress_bar=True)
+
+    points = []
+    for i, (doc, meta, emb) in enumerate(zip(docs, metas, embeddings)):
+        payload = {"text": doc}
+        payload.update(meta)
+        points.append(models.PointStruct(
+            id=str(uuid.uuid5(uuid.NAMESPACE_URL, f"{video_id}_{i}")),
+            vector=emb.tolist(),
+            payload=payload,
+        ))
+
+    db_instance.client.upsert(collection_name=col_name, points=points)
+
+    try:
+        builder = KnowledgeGraphBuilder()
+        builder.build_graph(col_name)
+        logger.info(f"🕸️ Knowledge Graph built for [{col_name}]")
+    except Exception as e:
+        logger.warning(f"Knowledge Graph build failed (non-critical): {e}")
+
+    return {
+        "status": "success",
+        "video_id": video_id,
+        "title": title,
+        "collection_name": col_name,
+        "chunks_added": len(docs),
+        "total_in_db": len(docs),
+    }
+
+
+# -------------------------------------------------------------------
 # 🛡️ BACKWARD-COMPATIBLE WRAPPER FOR FASTAPI / STREAMLIT
 # -------------------------------------------------------------------
 class IngestionPipeline:
-    def __init__(self, use_contextual_enrichment: bool = True):
+    def __init__(self, use_contextual_enrichment: bool = False):
         self.use_contextual_enrichment = use_contextual_enrichment
 
     def run(self, youtube_url: str, force_reingest: bool = False) -> Dict:
-        logger.info(f"🚀 INGESTION TRIGGERED VIA ZENML MLOps: {youtube_url}")
-        
-        # 🔔 Bấm nút kích hoạt Đạo diễn luồng ZenML
-        zenml_ingestion_pipeline(
-            youtube_url=youtube_url, 
-            use_contextual=self.use_contextual_enrichment
-        )
-        
-        logger.info("✅ ZENML PIPELINE COMPLETED SUCCESSFULLY!")
-        
-        # Trả về bộ từ điển (Dict) giả lập khớp 100% với phiên bản code cũ.
-        # Điều này giúp Streamlit / FastAPI UI bên ngoài không hề biết code lõi đã 
-        # mọc thêm cánh MLOps ZenML, bảo vệ an toàn cho hệ thống khỏi bị Crash.
-        # col_name calculation unused mock removed
-        
-        return {
-            "status": "success",
-            "video_id": "Processed_By_ZenML",
-            "title": "ZenML Processed Video (Check UI)",
-            "collection": "youtube-video",  # Mocked collection
-            "chunks_added": 999,
-            "context_enriched": 999,
-            "total_in_db": 999,
-            "latency": {
-                "extract_s": 0.0, "chunk_s": 0.0, "enrich_s": 0.0, "graph_s": 0.0, "load_s": 0.0, "total_s": 0.0
-            },
+        import time
+        logger.info(f"🚀 INGESTION STARTED: {youtube_url}")
+        t0 = time.time()
+
+        raw_data = _run_extract_video(youtube_url)
+        t1 = time.time()
+
+        chunks = _run_semantic_chunking(raw_data, self.use_contextual_enrichment)
+        t2 = time.time()
+
+        final_chunks = _run_graph_extraction(chunks)
+        t3 = time.time()
+
+        result = _run_save_to_qdrant(raw_data, final_chunks)
+        t4 = time.time()
+
+        result["latency"] = {
+            "extract_s": round(t1 - t0, 2),
+            "chunk_s": round(t2 - t1, 2),
+            "graph_s": round(t3 - t2, 2),
+            "load_s": round(t4 - t3, 2),
+            "total_s": round(t4 - t0, 2),
         }
+
+        logger.info(f"✅ INGESTION COMPLETED in {result['latency']['total_s']}s — {result['chunks_added']} chunks → [{result['collection_name']}]")
+        return result

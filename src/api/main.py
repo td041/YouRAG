@@ -44,17 +44,33 @@ class AIStore:
     graph_retriever = None
     cache = None
 
+def _load_component(name: str, factory, attr: str) -> None:
+    """Load một AI component vào AIStore; log lỗi thay vì crash toàn app."""
+    try:
+        setattr(AIStore, attr, factory())
+        logger.info(f"  ✓ {name} ready")
+    except Exception as e:
+        logger.error(f"  ✗ {name} failed to load — feature will be unavailable: {e}")
+
+
 @app.on_event("startup")
 async def startup_event():
     logger.info("🚀 Đang khởi động Backend YouRAG...")
-    init_db()
-    AIStore.pipeline = IngestionPipeline()
-    AIStore.reranker = CrossEncoderReranker()
-    AIStore.generator = AnswerGenerator()
-    AIStore.summarizer = VideoSummarizer()
-    AIStore.graph_retriever = GraphRetriever()
-    AIStore.cache = SemanticCache()
-    logger.info("✅ TẤT CẢ MÔ HÌNH VÀ CACHING ĐÃ SẴN SÀNG!")
+
+    try:
+        init_db()
+    except Exception as e:
+        logger.error(f"[Startup] PostgreSQL init failed (non-critical): {e}")
+
+    _load_component("IngestionPipeline", lambda: IngestionPipeline(), "pipeline")
+    _load_component("CrossEncoderReranker", lambda: CrossEncoderReranker(), "reranker")
+    _load_component("AnswerGenerator", lambda: AnswerGenerator(), "generator")
+    _load_component("VideoSummarizer", lambda: VideoSummarizer(), "summarizer")
+    _load_component("GraphRetriever", lambda: GraphRetriever(), "graph_retriever")
+    _load_component("SemanticCache", lambda: SemanticCache(), "cache")
+
+    loaded = [k for k, v in vars(AIStore).items() if not k.startswith("_") and v is not None]
+    logger.info(f"✅ Startup complete. Loaded: {loaded}")
 
 # ─────────────────────────────────────────────
 # MODELS (Pydantic)
@@ -103,6 +119,25 @@ def list_collections():
             detailed_collections.append({"name": c.name, "title": c.name, "video_id": None})
 
     return detailed_collections
+
+@app.delete("/collections/{collection_name}")
+async def delete_collection(collection_name: str):
+    """Xóa một collection (video) khỏi Qdrant và graph store."""
+    try:
+        db_instance.client.delete_collection(collection_name)
+        # Xóa knowledge graph nếu có
+        import os
+        graph_path = os.path.join("graph_store", f"{collection_name}.gpickle")
+        if os.path.exists(graph_path):
+            os.remove(graph_path)
+        # Invalidate graph cache trong GraphRetriever
+        if AIStore.graph_retriever:
+            AIStore.graph_retriever._graph_cache.pop(collection_name, None)
+        logger.info(f"🗑️ Deleted collection: {collection_name}")
+        return {"status": "deleted", "collection": collection_name}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.post("/ingest")
 async def ingest_video(req: IngestRequest):
@@ -197,13 +232,22 @@ async def chat_rag(req: ChatRequest):
             facts=graph_data.get("facts", [])
         )
 
+        # 6. Generate Suggested Questions
+        sq_prompt = f"Dựa trên câu hỏi '{req.query}' và câu trả lời '{answer}', hãy gợi ý đúng 3 câu hỏi ngắn gọn (mỗi câu dưới 12 từ) mà người dùng có thể hỏi tiếp theo. Trả về định dạng: Câu 1|Câu 2|Câu 3. Không gạch đầu dòng, không đánh số."
+        try:
+            sq_list = AIStore.generator.llm.chat_complete(sq_prompt, system="Bạn là trợ lý RAG.", max_tokens=100)
+            suggestions = [s.strip() for s in sq_list.replace('\n', '').split("|") if s.strip()]
+        except:
+            suggestions = []
+
         return {
             "answer": answer,
             "sources": sources,
             "facts": graph_data.get("facts", []),
             "graph_entities": graph_data.get("entities", []),
             "session_id": session_id,
-            "cached": False
+            "cached": False,
+            "suggestions": suggestions[:3]
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -296,6 +340,16 @@ async def chat_rag_stream(req: ChatRequest):
                 sources=sources,
                 facts=graph_data.get("facts", [])
             )
+
+            # Generate Suggested Questions
+            sq_prompt = f"Dựa trên câu hỏi '{req.query}' và câu trả lời '{full_response}', hãy gợi ý đúng 3 câu hỏi ngắn gọn (mỗi câu dưới 12 từ) mà người dùng có thể hỏi tiếp theo. Trả về định dạng: Câu 1|Câu 2|Câu 3. Không gạch đầu dòng, không đánh số."
+            try:
+                sq_list = AIStore.generator.llm.chat_complete(sq_prompt, system="Bạn là trợ lý RAG.", max_tokens=100)
+                # Clean up format issues from LLM just in case
+                sq_clean = sq_list.replace('\n', '').strip()
+                yield f"\n\n__SUGGESTIONS__::{sq_clean}"
+            except Exception as e:
+                logger.error(f"Error generating suggestions: {e}")
 
         return StreamingResponse(response_generator(), media_type="text/plain")
     except Exception as e:

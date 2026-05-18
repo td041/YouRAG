@@ -98,8 +98,8 @@ Hãy phân tích thật sâu sát, không bỏ sót các mẹo vặt hay điểm
             summary = self.llm.chat_complete(
                 prompt=prompt,
                 system="Bạn là một chuyên gia phân tích dữ liệu video. Bạn cực kỳ cẩn thận, không được bỏ sót chi tiết và phải giải thích cặn kẽ mọi thứ bằng tiếng Việt.",
-                max_tokens=1500, # Giảm xuống 1500 tránh crash Groq
-                temperature=0.3  # Giữ ở mức logic nhưng văn phong tự nhiên
+                max_tokens=4000,
+                temperature=0.3
             )
             
             logger.info("✅ Quá trình tóm tắt hoàn tất!")
@@ -174,7 +174,7 @@ Hãy viết văn phong chuyên nghiệp, dễ hiểu.
             for chunk in self.llm.chat_complete_stream(
                 prompt=prompt,
                 system="Bạn là một chuyên gia phân tích dữ liệu video. Hãy tóm tắt thật hay và đầy đủ.",
-                max_tokens=2000,
+                max_tokens=4000,
                 temperature=0.3
             ):
                 yield chunk

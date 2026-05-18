@@ -73,16 +73,23 @@ Quy tắc:
             )
             
             response = response.strip()
-            if response.startswith("```"):
-                response = response.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
-            
-            triples = json.loads(response)
-            
-            # Gắn chunk_index vào mỗi triple
+            # Strip markdown fences nếu LLM trả về ```json ... ```
+            if "```" in response:
+                response = response.split("```")[-2] if response.count("```") >= 2 else response
+                response = re.sub(r'^json\s*', '', response.strip()).strip()
+            # Tìm JSON array trong response (phòng trường hợp LLM thêm text xung quanh)
+            match = re.search(r'\[.*\]', response, re.DOTALL)
+            if not match:
+                return []
+            triples = json.loads(match.group())
+
+            # Validate structure — chỉ giữ triple hợp lệ
+            valid = []
             for t in triples:
-                t["chunk_index"] = chunk_index
-            
-            return triples
+                if isinstance(t, dict) and all(k in t for k in ("subject", "predicate", "object")):
+                    t["chunk_index"] = chunk_index
+                    valid.append(t)
+            return valid
 
         except Exception as e:
             logger.warning(f"   ⚠️ Lỗi extract triples chunk {chunk_index}: {e}")
@@ -241,11 +248,16 @@ Nếu không có entity rõ ràng, trả về []."""
                 temperature=0.0
             )
             response = response.strip()
-            if response.startswith("```"):
-                response = response.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
-            return json.loads(response)
+            if "```" in response:
+                response = response.split("```")[-2] if response.count("```") >= 2 else response
+                response = re.sub(r'^json\s*', '', response.strip()).strip()
+            match = re.search(r'\[.*\]', response, re.DOTALL)
+            if not match:
+                raise ValueError("No JSON array found")
+            entities = json.loads(match.group())
+            return [e for e in entities if isinstance(e, str)]
         except Exception:
-            # Fallback: Tách từ viết hoa
+            # Fallback: tách từ viết hoa
             words = re.findall(r'\b[A-Z][a-zÀ-ỹ]+(?:\s+[A-Z][a-zÀ-ỹ]+)*\b', query)
             return words if words else query.split()[:3]
 
