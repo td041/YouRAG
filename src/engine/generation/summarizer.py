@@ -3,6 +3,7 @@ from src.engine.generation.llm_client import LLMClient
 from src.core.database import db_instance
 from src.core.logger import logger
 from src.core.utils import format_timestamp
+from src.core.config import settings
 
 class VideoSummarizer:
     """Module Tóm tắt Toàn bộ nội dung Video.
@@ -51,9 +52,7 @@ class VideoSummarizer:
             # Sort theo thứ tự gốc từ đầu đến cuối video
             chunks.sort(key=lambda x: x["index"])
             
-            # Khống chế số lượng Chunks tối đa để lọt qua khe cửa hẹp 6000 TPM của Groq Free
-            # Trung bình 1 chunk khoảng 800 ký tự -> 12 chunks (10000 ký tự) là an toàn nhất
-            MAX_CHUNKS = 12
+            MAX_CHUNKS = settings.SUMMARIZER_MAX_CHUNKS
             if len(chunks) > MAX_CHUNKS:
                 logger.warning(f"Video quá dài ({len(chunks)} chunks). Đang áp dụng Trích mẫu Tỉ Lệ Đều (Uniform Sampling)...")
                 step = len(chunks) / MAX_CHUNKS

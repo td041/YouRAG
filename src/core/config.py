@@ -45,6 +45,8 @@ class Settings(BaseSettings):
     SEMANTIC_CACHE_THRESHOLD: float = 0.92
     CHUNK_SIZE: int = 800
     CHUNK_OVERLAP: int = 150
+    SUMMARIZER_MAX_CHUNKS: int = 12   # Số chunks tối đa để summarize (Groq TPM limit)
+    GRAPH_MAX_CHUNKS: int = 15        # Số chunks tối đa để build knowledge graph
 
     # 7. Cấu hình Kết nối (Connection Hub)
     # Tự động lấy từ Docker Compose hoặc file .env

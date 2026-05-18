@@ -8,6 +8,7 @@ Thiết kế:
 """
 
 import os
+import re
 import time
 from typing import Optional
 
@@ -81,7 +82,6 @@ class LLMClient:
         temperature: float = 0.0,
     ) -> str:
         """Gọi LLM, trả về nội dung text. Có retry với rate-limit-aware backoff."""
-        import re
         messages = [
             {"role": "system", "content": system},
             {"role": "user", "content": prompt},
@@ -99,11 +99,21 @@ class LLMClient:
 
             except Exception as e:
                 err_str = str(e)
-                # Parse thời gian retry từ message Groq ("Please try again in X.Xs")
-                wait_match = re.search(r"try again in (\d+\.?\d*)s", err_str)
-                wait_time = float(wait_match.group(1)) + 0.5 if wait_match else (2.0 * attempt)
+                is_rate_limit = "429" in err_str or "rate_limit" in err_str or "rate limit" in err_str.lower()
 
-                if "429" in err_str or "rate_limit" in err_str:
+                # Parse wait time từ nhiều format khác nhau của Groq/OpenAI
+                wait_time = 2.0 * attempt  # default exponential backoff
+                for pattern in [
+                    r"try again in (\d+\.?\d*)s",
+                    r"retry after (\d+\.?\d*)",
+                    r"wait (\d+\.?\d*) second",
+                ]:
+                    m = re.search(pattern, err_str, re.IGNORECASE)
+                    if m:
+                        wait_time = float(m.group(1)) + 0.5
+                        break
+
+                if is_rate_limit:
                     logger.warning(f"Rate limit (attempt {attempt}/{self.max_retries}) → chờ {wait_time:.1f}s")
                 else:
                     logger.warning(f"LLM attempt {attempt}/{self.max_retries} lỗi: {e}")

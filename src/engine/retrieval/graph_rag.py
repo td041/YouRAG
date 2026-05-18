@@ -21,7 +21,6 @@ Kiến trúc:
 
 import os
 import json
-import pickle
 import re
 from typing import List, Dict, Any, Set, Optional
 
@@ -29,6 +28,7 @@ import networkx as nx
 
 from src.core.database import db_instance
 from src.core.logger import logger
+from src.core.config import settings
 from src.engine.generation.llm_client import LLMClient
 
 
@@ -136,7 +136,7 @@ Quy tắc:
         logger.info(f"   📦 Tổng chunks: {len(chunks)}")
 
         # 2. Trích mẫu để tiết kiệm API calls (Groq free tier)
-        MAX_CHUNKS = 15
+        MAX_CHUNKS = settings.GRAPH_MAX_CHUNKS
         if len(chunks) > MAX_CHUNKS:
             step = len(chunks) / MAX_CHUNKS
             sampled = [chunks[int(i * step)] for i in range(MAX_CHUNKS)]
@@ -175,23 +175,27 @@ Quy tắc:
         logger.info(f"   ✅ Graph: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges")
         logger.info(f"   📊 Tổng triples: {len(all_triples)}")
         
-        # 4. Lưu Graph xuống disk
-        graph_path = os.path.join(self.GRAPH_DIR, f"{collection_name}.gpickle")
-        
-        # Convert sets to lists for pickling
+        # 4. Lưu Graph xuống disk dưới dạng JSON (thay pickle — tránh RCE risk)
+        graph_path = os.path.join(self.GRAPH_DIR, f"{collection_name}.json")
+
+        # Serialize NetworkX graph → node-link JSON
         for node in G.nodes:
             if isinstance(G.nodes[node].get("chunk_indices"), set):
                 G.nodes[node]["chunk_indices"] = list(G.nodes[node]["chunk_indices"])
-        
-        with open(graph_path, "wb") as f:
-            pickle.dump(G, f)
-        
-        # Lưu triples dạng JSON để debug
-        triples_path = os.path.join(self.GRAPH_DIR, f"{collection_name}_triples.json")
-        with open(triples_path, "w", encoding="utf-8") as f:
-            json.dump(all_triples, f, ensure_ascii=False, indent=2)
-        
-        logger.info(f"   💾 Đã lưu Graph tại: {graph_path}")
+
+        graph_data = {
+            "graph": nx.node_link_data(G),
+            "triples": all_triples,
+        }
+        with open(graph_path, "w", encoding="utf-8") as f:
+            json.dump(graph_data, f, ensure_ascii=False)
+
+        # Xóa file pickle cũ nếu còn tồn tại
+        old_pickle = os.path.join(self.GRAPH_DIR, f"{collection_name}.gpickle")
+        if os.path.exists(old_pickle):
+            os.remove(old_pickle)
+
+        logger.info(f"   💾 Đã lưu Graph (JSON) tại: {graph_path}")
         return G
 
 
@@ -213,18 +217,19 @@ class GraphRetriever:
         self._graph_cache: Dict[str, nx.DiGraph] = {}
 
     def _load_graph(self, collection_name: str) -> Optional[nx.DiGraph]:
-        """Load Graph từ disk (có cache)."""
+        """Load Graph từ disk (có cache). Dùng JSON thay pickle để tránh RCE risk."""
         if collection_name in self._graph_cache:
             return self._graph_cache[collection_name]
-        
-        graph_path = os.path.join(self.GRAPH_DIR, f"{collection_name}.gpickle")
+
+        graph_path = os.path.join(self.GRAPH_DIR, f"{collection_name}.json")
         if not os.path.exists(graph_path):
             logger.warning(f"⚠️ Chưa có Knowledge Graph cho [{collection_name}]. Hãy chạy build trước.")
             return None
-        
-        with open(graph_path, "rb") as f:
-            G = pickle.load(f)  # nosec B301
-        
+
+        with open(graph_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        G = nx.node_link_graph(data["graph"], directed=True)
         self._graph_cache[collection_name] = G
         logger.info(f"📂 Loaded Graph [{collection_name}]: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges")
         return G
