@@ -11,6 +11,7 @@ def mock_settings_and_providers(mocker):
     mock_s.LLM_PROVIDER = "groq"
     mock_s.GROQ_API_KEY.get_secret_value.return_value = "fake_groq_key"
     mock_s.OPENAI_API_KEY = None
+    mock_s.GEMINI_API_KEY = None
     mock_s.LLM_CONTEXTUAL_MODEL = "llama-3.1-8b-instant"
     mock_s.LLM_MODEL_NAME = "llama-3.3-70b-versatile"
     mock_s.OLLAMA_BASE_URL = "http://localhost:11434/v1"
@@ -180,3 +181,105 @@ def test_openai_provider_selection(mock_settings_and_providers):
     with patch.dict(sys.modules, {"openai": mock_openai_module}):
         client = LLMClient(provider="openai")
     assert client.provider == "openai"
+
+
+# ── Gemini tests ───────────────────────────────────────────────────────────
+
+def test_gemini_provider_selection(mock_settings_and_providers):
+    """Kiểm tra LLMClient chọn Gemini khi LLM_PROVIDER='gemini'."""
+    import sys
+    mock_openai_module = MagicMock()
+    mock_openai_module.OpenAI = MagicMock(return_value=MagicMock())
+    mock_settings_and_providers.LLM_PROVIDER = "gemini"
+    mock_settings_and_providers.GEMINI_API_KEY = MagicMock()
+    mock_settings_and_providers.GEMINI_API_KEY.get_secret_value.return_value = "fake_gemini_key"
+    with patch.dict(sys.modules, {"openai": mock_openai_module}):
+        client = LLMClient(provider="gemini")
+    assert client.provider == "gemini"
+    assert client.model == "gemini-1.5-flash"
+
+
+def test_gemini_chat_complete_success(mock_settings_and_providers):
+    """Kiểm tra chat_complete với Gemini provider."""
+    import sys
+    mock_openai_module = MagicMock()
+    mock_client = MagicMock()
+    mock_openai_module.OpenAI.return_value = mock_client
+    mock_client.chat.completions.create.return_value = _make_response("Gemini response")
+
+    mock_settings_and_providers.LLM_PROVIDER = "gemini"
+    mock_settings_and_providers.GEMINI_API_KEY = MagicMock()
+    mock_settings_and_providers.GEMINI_API_KEY.get_secret_value.return_value = "fake_gemini_key"
+
+    with patch.dict(sys.modules, {"openai": mock_openai_module}):
+        client = LLMClient(provider="gemini")
+        result = client.chat_complete("test prompt")
+
+    assert result == "Gemini response"
+    assert client.model == "gemini-1.5-flash"
+
+
+def test_groq_rate_limit_fallback_to_gemini(mock_settings_and_providers):
+    """Kiểm tra auto-fallback sang Gemini khi Groq trả 429."""
+    import sys
+    mock_openai_module = MagicMock()
+    mock_fallback_client = MagicMock()
+    mock_openai_module.OpenAI.return_value = mock_fallback_client
+    mock_fallback_client.chat.completions.create.return_value = _make_response("Gemini answer")
+
+    mock_settings_and_providers.GEMINI_API_KEY = MagicMock()
+    mock_settings_and_providers.GEMINI_API_KEY.get_secret_value.return_value = "fake_gemini_key"
+
+    with patch("groq.Groq") as mock_groq_cls, \
+         patch("time.sleep"), \
+         patch.dict(sys.modules, {"openai": mock_openai_module}):
+        mock_groq_instance = MagicMock()
+        mock_groq_cls.return_value = mock_groq_instance
+        mock_groq_instance.chat.completions.create.side_effect = Exception("429 rate_limit exceeded")
+
+        client = LLMClient(provider="groq")
+        result = client.chat_complete("test")
+
+    assert result == "Gemini answer"
+
+
+def test_groq_rate_limit_fallback_stream(mock_settings_and_providers):
+    """Kiểm tra streaming auto-fallback sang Gemini khi Groq rate limit."""
+    import sys
+    mock_openai_module = MagicMock()
+    mock_fallback_client = MagicMock()
+    mock_openai_module.OpenAI.return_value = mock_fallback_client
+
+    chunk1 = MagicMock()
+    chunk1.choices[0].delta.content = "Gemini"
+    chunk2 = MagicMock()
+    chunk2.choices[0].delta.content = " stream"
+    mock_fallback_client.chat.completions.create.return_value = iter([chunk1, chunk2])
+
+    mock_settings_and_providers.GEMINI_API_KEY = MagicMock()
+    mock_settings_and_providers.GEMINI_API_KEY.get_secret_value.return_value = "fake_gemini_key"
+
+    with patch("groq.Groq") as mock_groq_cls, \
+         patch.dict(sys.modules, {"openai": mock_openai_module}):
+        mock_groq_instance = MagicMock()
+        mock_groq_cls.return_value = mock_groq_instance
+        mock_groq_instance.chat.completions.create.side_effect = Exception("429 rate_limit exceeded")
+
+        client = LLMClient(provider="groq")
+        results = list(client.chat_complete_stream("test"))
+
+    assert results == ["Gemini", " stream"]
+
+
+def test_stream_non_rate_limit_error_yields_error_message(mock_settings_and_providers):
+    """Kiểm tra stream lỗi không phải rate limit → yield thông báo lỗi."""
+    with patch("groq.Groq") as mock_groq_cls:
+        mock_groq_instance = MagicMock()
+        mock_groq_cls.return_value = mock_groq_instance
+        mock_groq_instance.chat.completions.create.side_effect = Exception("Server error 500")
+
+        client = LLMClient(provider="groq")
+        results = list(client.chat_complete_stream("test"))
+
+    assert len(results) == 1
+    assert "Lỗi Streaming" in results[0]
