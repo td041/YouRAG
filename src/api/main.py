@@ -209,18 +209,18 @@ async def chat_rag(req: ChatRequest, _: str = Depends(require_api_key)):
         chat_history_str = history_mgr.format_for_prompt()
 
         # --- CHECK SEMANTIC CACHE ---
-        cached_data = AIStore.cache.check_cache(req.query)
+        cached_data = AIStore.cache.check_cache(req.query, collection_name=req.collection)
         if cached_data:
             answer = cached_data["answer"]
             sources = cached_data["sources"]
             facts = cached_data["facts"]
-            
+
             history_mgr.add_message(role="assistant", content=answer)
             return {
                 "answer": answer,
                 "sources": sources,
                 "facts": facts,
-                "graph_entities": [], # entities not cached currently
+                "graph_entities": [],
                 "session_id": session_id,
                 "cached": True
             }
@@ -261,9 +261,10 @@ async def chat_rag(req: ChatRequest, _: str = Depends(require_api_key)):
 
         # --- SAVE TO CACHE ---
         AIStore.cache.save_to_cache(
-            query=req.query, 
-            answer=answer, 
-            sources=sources, 
+            query=req.query,
+            answer=answer,
+            collection_name=req.collection,
+            sources=sources,
             facts=graph_data.get("facts", [])
         )
 
@@ -306,7 +307,7 @@ async def chat_rag_stream(req: ChatRequest, _: str = Depends(require_api_key)):
         chat_history_str = history_mgr.format_for_prompt()
 
         # --- CHECK SEMANTIC CACHE ---
-        cached_data = AIStore.cache.check_cache(req.query)
+        cached_data = AIStore.cache.check_cache(req.query, collection_name=req.collection)
         if cached_data:
             def cached_generator():
                 answer = cached_data["answer"]
@@ -372,6 +373,7 @@ async def chat_rag_stream(req: ChatRequest, _: str = Depends(require_api_key)):
             AIStore.cache.save_to_cache(
                 query=req.query,
                 answer=full_response,
+                collection_name=req.collection,
                 sources=sources,
                 facts=graph_data.get("facts", [])
             )
@@ -389,6 +391,24 @@ async def chat_rag_stream(req: ChatRequest, _: str = Depends(require_api_key)):
         return StreamingResponse(response_generator(), media_type="text/plain")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/suggestions/{collection}")
+async def get_suggestions(collection: str, _: str = Depends(require_api_key)):
+    """Generate 4 câu hỏi gợi ý dựa trên nội dung video."""
+    try:
+        summary = AIStore.summarizer.summarize(collection)
+        prompt = (
+            f"Dựa trên tóm tắt video sau:\n\n{summary}\n\n"
+            "Hãy gợi ý đúng 4 câu hỏi ngắn gọn (mỗi câu dưới 10 từ) mà người xem có thể hỏi về video này. "
+            "Trả về định dạng: Câu 1|Câu 2|Câu 3|Câu 4. Không gạch đầu dòng, không đánh số, không giải thích thêm."
+        )
+        raw = AIStore.generator.llm.chat_complete(prompt, system="Bạn là trợ lý RAG.", max_tokens=120)
+        suggestions = [s.strip() for s in raw.replace("\n", "").split("|") if s.strip()]
+        return {"suggestions": suggestions[:4]}
+    except Exception as e:
+        logger.error(f"[suggestions] {e}")
+        return {"suggestions": []}
+
 
 @app.get("/summarize/{collection}")
 async def get_summary(collection: str, _: str = Depends(require_api_key)):

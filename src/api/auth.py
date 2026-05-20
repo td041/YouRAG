@@ -14,8 +14,8 @@ def require_api_key(key: str = Security(_api_key_header)) -> str:
     Nếu đã cấu hình → yêu cầu header X-API-Key khớp.
     """
     configured = settings.API_KEY
-    if configured is None:
-        # Dev mode: không cấu hình key → cho qua hết
+    # Dev mode: API_KEY chưa set hoặc set thành chuỗi rỗng → bỏ qua kiểm tra
+    if configured is None or configured.get_secret_value().strip() == "":
         return ""
     if key != configured.get_secret_value():
         raise HTTPException(

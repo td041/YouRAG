@@ -33,16 +33,26 @@ class SemanticCache:
         digest = hashlib.sha256(query.encode("utf-8")).hexdigest()
         return int(digest, 16) % (2**63)
 
-    def check_cache(self, query: str) -> Optional[dict]:
+    def check_cache(self, query: str, collection_name: Optional[str] = None) -> Optional[dict]:
         """Embed query and search for a semantically similar cached answer.
 
+        Filters by collection_name so cache entries from different videos don't cross-contaminate.
         Returns a dict {answer, sources, facts} if a hit is found, or None.
         """
         try:
+            from qdrant_client.http.models import Filter, FieldCondition, MatchValue
             vector = self._embed(query)
+
+            query_filter = None
+            if collection_name:
+                query_filter = Filter(
+                    must=[FieldCondition(key="collection_name", match=MatchValue(value=collection_name))]
+                )
+
             results = self.db.client.query_points(
                 collection_name=self.CACHE_COLLECTION,
                 query=vector,
+                query_filter=query_filter,
                 limit=1,
                 with_payload=True,
                 score_threshold=self.threshold,
@@ -50,7 +60,7 @@ class SemanticCache:
             if results.points:
                 hit = results.points[0]
                 logger.info(
-                    f"[SemanticCache] 🎯 HIT (score={hit.score:.4f}) for query: '{query[:60]}...'"
+                    f"[SemanticCache] 🎯 HIT (score={hit.score:.4f}) col={collection_name} query='{query[:60]}'"
                 )
                 return {
                     "answer": hit.payload.get("answer"),
@@ -61,13 +71,16 @@ class SemanticCache:
             logger.warning(f"[SemanticCache] check_cache error (non-fatal): {e}")
         return None
 
-    def save_to_cache(self, query: str, answer: str, sources: list = None, facts: list = None) -> None:
+    def save_to_cache(self, query: str, answer: str, collection_name: Optional[str] = None, sources: list = None, facts: list = None) -> None:
         """Embed query and upsert (query_vector, answer, metadata) into the cache collection."""
         try:
             vector = self._embed(query)
-            point_id = self._make_id(query)
+            # ID bao gồm cả collection để tránh collision giữa các video
+            key = f"{collection_name}::{query}" if collection_name else query
+            point_id = self._make_id(key)
             payload = {
-                "query": query, 
+                "query": query,
+                "collection_name": collection_name or "",
                 "answer": answer,
                 "sources": sources or [],
                 "facts": facts or []
@@ -82,6 +95,6 @@ class SemanticCache:
                     )
                 ],
             )
-            logger.info(f"[SemanticCache] ✅ SAVED entry id={point_id} for query: '{query[:60]}...'")
+            logger.info(f"[SemanticCache] ✅ SAVED col={collection_name} id={point_id} query='{query[:60]}'")
         except Exception as e:
             logger.warning(f"[SemanticCache] save_to_cache error (non-fatal): {e}")
