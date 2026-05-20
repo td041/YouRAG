@@ -44,6 +44,16 @@ export async function deleteCollection(name: string) {
   return r.json();
 }
 
+export async function fetchSuggestions(collection: string): Promise<string[]> {
+  const r = await fetch(`${BASE}/suggestions/${encodeURIComponent(collection)}`, {
+    headers: authHeaders(),
+    cache: "no-store",
+  });
+  if (!r.ok) return [];
+  const data = await r.json();
+  return data.suggestions ?? [];
+}
+
 export function streamChat(
   query: string,
   collection: string,

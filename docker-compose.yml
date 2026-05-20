@@ -58,6 +58,9 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: yourag-backend
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     ports:
       - "8000:8000"
     volumes:
@@ -108,6 +111,9 @@ services:
     container_name: yourag-frontend
     ports:
       - "3000:3000"
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     environment:
       - NEXT_PUBLIC_API_URL=http://localhost:8000
       - NEXT_PUBLIC_API_KEY=${API_KEY:-}
@@ -126,3 +132,11 @@ volumes:
 networks:
   yourag_network:
     driver: bridge
+    driver_opts:
+      com.docker.network.bridge.enable_ip_masquerade: "true"
+
+# DNS cho build containers (fix EAI_AGAIN trong WSL2)
+x-dns: &default-dns
+  dns:
+    - 8.8.8.8
+    - 1.1.1.1
