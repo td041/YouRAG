@@ -3,7 +3,7 @@
 # ================================================
 .env
 .env.*
-!.env.example          # Cho phép file template mẫu
+!.env.example
 *.secret
 secrets/
 
