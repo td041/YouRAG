@@ -7,20 +7,24 @@ class PromptBuilder:
     def build_system_prompt(mode: str = "standard") -> str:
         """Tạo System Prompt dựa trên chế độ trả lời."""
         base_rules = (
-            "Bạn là chuyên gia phân tích Video. NHIỆM VỤ: Trả lời dựa trên [Tài liệu], [Tổng quan] và [Bản đồ thực thể].\n"
-            "QUY TẮC:\n"
+            "Bạn là chuyên gia phân tích Video. NHIỆM VỤ: Trả lời CHỈ dựa trên [Tài liệu], [Tổng quan] và [Bản đồ thực thể] được cung cấp.\n"
+            "QUY TẮC NGHIÊM NGẶT:\n"
             "1. Xưng 'tôi'. KHÔNG mở đầu rườm rà. Hãy vào thẳng nội dung.\n"
-            "2. LUÔN trích dẫn mốc [mm:ss] cho thông tin từ tài liệu.\n"
-            "3. Nếu câu hỏi về số lượng, hãy ưu tiên dùng số liệu từ [Bản đồ thực thể].\n"
+            "2. LUÔN trích dẫn mốc [mm:ss] cho MỌI thông tin cụ thể lấy từ tài liệu.\n"
+            "3. Nếu câu hỏi về số lượng, ưu tiên dùng số liệu từ [Bản đồ thực thể].\n"
+            "4. TUYỆT ĐỐI KHÔNG bịa thêm thông tin không có trong [Tài liệu]. "
+            "Nếu thông tin không xuất hiện trong tài liệu, trả lời: "
+            "'Tôi không tìm thấy thông tin này trong video.'\n"
+            "5. Chỉ trích dẫn [mm:ss] nếu timestamp đó thực sự xuất hiện trong [Tài liệu] bên dưới.\n"
         )
-        
+
         if mode == "mindmap":
             return base_rules + (
-                "4. ĐỊNH DẠNG: Sử dụng Mermaid Syntax (graph TD) để vẽ sơ đồ quan hệ nếu cần thiết.\n"
-                "5. Sử dụng bảng (Markdown Table) cho các dữ liệu so sánh."
+                "6. ĐỊNH DẠNG: Sử dụng Mermaid Syntax (graph TD) để vẽ sơ đồ quan hệ nếu cần thiết.\n"
+                "7. Sử dụng bảng (Markdown Table) cho các dữ liệu so sánh."
             )
-            
-        return base_rules + "4. Trả lời bằng tiếng Việt chuyên sâu, chính xác."
+
+        return base_rules + "6. Trả lời bằng tiếng Việt chuyên sâu, chính xác."
 
     @staticmethod
     def build_user_prompt(
@@ -58,17 +62,17 @@ Hãy thực hiện nhiệm vụ phân tích và trả lời chính xác nhất.
     def build_self_correction_prompt(query: str, draft_answer: str, graph_facts: List[str]) -> str:
         """Tạo prompt để AI tự kiểm tra lại câu trả lời (Self-Correction)."""
         facts_block = "\n".join([f"- {f}" for f in graph_facts])
-        return f"""
-Bạn là một kiểm toán viên AI. Hãy kiểm tra câu trả lời sau có mâu thuẫn với sự thật trong Đồ thị tri thức không.
+        return f"""Bạn là một kiểm toán viên AI nghiêm khắc. Kiểm tra câu trả lời sau theo từng bước.
 
 Câu hỏi: {query}
-Câu trả lời dự kiến: {draft_answer}
+Câu trả lời cần kiểm tra:
+{draft_answer}
 
-Sự thật từ Đồ thị (Graph Facts):
+Sự thật đã xác minh từ Knowledge Graph:
 {facts_block}
 
-NHIỆM VỤ:
-- Nếu có mâu thuẫn, hãy sửa lại câu trả lời để khớp với Graph Facts.
-- Nếu câu trả lời thiếu mốc thời gian [mm:ss] cho các thông tin quan trọng, hãy bổ sung (nếu có trong draft).
-- Chỉ trả về bản câu trả lời đã được sửa đổi cuối cùng.
-"""
+NHIỆM VỤ KIỂM TRA:
+1. Tìm mọi thông tin trong câu trả lời MÂU THUẪN với Graph Facts → sửa lại.
+2. Tìm mọi thông tin trong câu trả lời KHÔNG CÓ TRONG Graph Facts VÀ không có [mm:ss] citation → xóa hoặc đánh dấu "không xác nhận được".
+3. Giữ nguyên cấu trúc, văn phong và mọi [mm:ss] hợp lệ của câu trả lời gốc.
+4. Chỉ trả về bản câu trả lời cuối cùng đã được sửa, không giải thích thêm."""
