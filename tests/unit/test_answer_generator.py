@@ -1,4 +1,4 @@
-"""Tests for AnswerGenerator — context building, mode detection, self-correction."""
+"""Tests for AnswerGenerator — context building, mode detection, self-correction, citation grounding."""
 
 import pytest
 from unittest.mock import MagicMock
@@ -10,6 +10,7 @@ def mock_llm_client(mocker):
     mock_cls = mocker.patch("src.engine.generation.answer_generator.LLMClient")
     mock_instance = MagicMock()
     mock_instance.chat_complete.return_value = "Đây là câu trả lời."
+    mock_instance.chat_complete_stream.return_value = iter(["Đây ", "là ", "câu trả lời."])
     mock_cls.return_value = mock_instance
     return mock_instance
 
@@ -24,7 +25,7 @@ def mock_semantic_cache(mocker):
     return mock_instance
 
 
-from src.engine.generation.answer_generator import AnswerGenerator  # noqa: E402
+from src.engine.generation.answer_generator import AnswerGenerator, _NO_CONTEXT_REPLY  # noqa: E402
 
 
 def _make_chunk(
@@ -69,8 +70,54 @@ def test_build_context_string_strips_contextual_prefix():
     chunk = _make_chunk(content="Đây là ngữ cảnh do LLM tạo ra.\n\nNội dung thực sự của chunk.")
     result = generator._build_context_string([chunk])
     assert "Nội dung thực sự của chunk." in result
-    # Prefix bị loại bỏ
     assert "Đây là ngữ cảnh do LLM tạo ra." not in result
+
+
+# ── No-context early return ────────────────────────────────────────────────
+
+def test_generate_returns_no_context_reply_when_chunks_empty(mock_llm_client, mock_semantic_cache):
+    """Kiểm tra generate trả về no-context reply khi không có chunks, không gọi LLM."""
+    generator = AnswerGenerator()
+    result = generator.generate(query="test", retrieved_chunks=[])
+    assert result == _NO_CONTEXT_REPLY
+    mock_llm_client.chat_complete.assert_not_called()
+
+
+def test_generate_stream_yields_no_context_reply_when_chunks_empty(mock_llm_client, mock_semantic_cache):
+    """Kiểm tra generate_stream yield no-context reply khi chunks rỗng."""
+    generator = AnswerGenerator()
+    results = list(generator.generate_stream(query="test", retrieved_chunks=[]))
+    assert results == [_NO_CONTEXT_REPLY]
+    mock_llm_client.chat_complete_stream.assert_not_called()
+
+
+# ── Citation Grounding tests ───────────────────────────────────────────────
+
+def test_validate_citations_removes_ungrounded_timestamps():
+    """Kiểm tra [mm:ss] không có trong chunks bị xóa khỏi câu trả lời."""
+    generator = AnswerGenerator()
+    chunks = [_make_chunk(start_time=0.0, end_time=60.0)]
+    answer = "Đây là điểm quan trọng [0:30] và điểm bịa [5:00]."
+    result = generator._validate_citations(answer, chunks)
+    assert "[0:30]" in result
+    assert "[5:00]" not in result
+
+
+def test_validate_citations_keeps_grounded_timestamps():
+    """Kiểm tra [mm:ss] hợp lệ được giữ nguyên."""
+    generator = AnswerGenerator()
+    chunks = [_make_chunk(start_time=60.0, end_time=120.0)]
+    answer = "Thông tin tại [1:30] rất quan trọng."
+    result = generator._validate_citations(answer, chunks)
+    assert "[1:30]" in result
+
+
+def test_validate_citations_empty_chunks_returns_unchanged():
+    """Kiểm tra khi chunks rỗng, answer không bị thay đổi."""
+    generator = AnswerGenerator()
+    answer = "Câu trả lời với [5:00] timestamp."
+    result = generator._validate_citations(answer, [])
+    assert result == answer
 
 
 # ── Mode detection tests ───────────────────────────────────────────────────
@@ -82,7 +129,7 @@ def test_generate_detects_mindmap_mode(mock_llm_client, mock_semantic_cache, moc
     mock_pb.build_user_prompt.return_value = "user prompt"
 
     generator = AnswerGenerator()
-    generator.generate(query="Vẽ sơ đồ về RAG", retrieved_chunks=[])
+    generator.generate(query="Vẽ sơ đồ về RAG", retrieved_chunks=[_make_chunk()])
 
     mock_pb.build_system_prompt.assert_called_once_with(mode="mindmap")
 
@@ -94,7 +141,7 @@ def test_generate_detects_standard_mode(mock_llm_client, mock_semantic_cache, mo
     mock_pb.build_user_prompt.return_value = "user prompt"
 
     generator = AnswerGenerator()
-    generator.generate(query="RAG hoạt động như thế nào?", retrieved_chunks=[])
+    generator.generate(query="RAG hoạt động như thế nào?", retrieved_chunks=[_make_chunk()])
 
     mock_pb.build_system_prompt.assert_called_once_with(mode="standard")
 
@@ -106,7 +153,7 @@ def test_generate_calls_self_correction_when_graph_facts(mock_llm_client, mock_s
     generator = AnswerGenerator()
     generator.generate(
         query="Bao nhiêu rounds?",
-        retrieved_chunks=[],
+        retrieved_chunks=[_make_chunk()],
         graph_facts=["The game has 3 rounds"]
     )
     # chat_complete gọi 2 lần: 1 draft + 1 self-correction
@@ -118,7 +165,7 @@ def test_generate_skips_self_correction_when_no_graph_facts(mock_llm_client, moc
     generator = AnswerGenerator()
     generator.generate(
         query="Câu hỏi bình thường",
-        retrieved_chunks=[],
+        retrieved_chunks=[_make_chunk()],
         graph_facts=None
     )
     # chat_complete gọi 1 lần: chỉ draft
@@ -134,7 +181,7 @@ def test_generate_returns_error_string_on_exception(mock_llm_client, mock_semant
     generator = AnswerGenerator()
     result = generator.generate(
         query="test query",
-        retrieved_chunks=[]
+        retrieved_chunks=[_make_chunk()]
     )
 
     assert result.startswith("Lỗi:")
@@ -157,9 +204,9 @@ def test_generate_returns_cached_answer_on_hit(mock_llm_client, mock_semantic_ca
 def test_generate_saves_to_cache_on_miss(mock_llm_client, mock_semantic_cache):
     """Kiểm tra generate lưu kết quả vào cache sau khi gọi LLM."""
     mock_llm_client.chat_complete.return_value = "LLM answer"
-    
+
     generator = AnswerGenerator()
-    generator.generate(query="hello", retrieved_chunks=[])
+    generator.generate(query="hello", retrieved_chunks=[_make_chunk()])
 
     mock_semantic_cache.save_to_cache.assert_called_once_with("hello", "LLM answer")
 
@@ -167,13 +214,14 @@ def test_generate_saves_to_cache_on_miss(mock_llm_client, mock_semantic_cache):
 # ── Streaming tests ────────────────────────────────────────────────────────
 
 def test_generate_stream_yields_chunks(mock_llm_client, mock_semantic_cache):
-    """Kiểm tra generate_stream yield từng chunk từ LLM."""
+    """Kiểm tra generate_stream yield từng chunk từ LLM (no graph_facts → fast path)."""
     mock_llm_client.chat_complete_stream.return_value = iter(["Hello", " World"])
 
     generator = AnswerGenerator()
-    results = list(generator.generate_stream(query="test", retrieved_chunks=[]))
+    results = list(generator.generate_stream(query="test", retrieved_chunks=[_make_chunk()]))
 
-    assert results == ["Hello", " World"]
+    assert "Hello" in results
+    assert " World" in results
 
 
 def test_generate_stream_error_yields_error(mock_llm_client, mock_semantic_cache):
@@ -181,24 +229,29 @@ def test_generate_stream_error_yields_error(mock_llm_client, mock_semantic_cache
     mock_llm_client.chat_complete_stream.side_effect = Exception("Stream crash")
 
     generator = AnswerGenerator()
-    results = list(generator.generate_stream(query="test", retrieved_chunks=[]))
+    results = list(generator.generate_stream(query="test", retrieved_chunks=[_make_chunk()]))
 
     assert len(results) == 1
     assert "Lỗi" in results[0]
 
 
-def test_generate_stream_with_graph_facts(mock_llm_client, mock_semantic_cache):
-    """Kiểm tra generate_stream inject graph facts vào prompt."""
-    mock_llm_client.chat_complete_stream.return_value = iter(["Answer"])
+def test_generate_stream_with_graph_facts_uses_correction(mock_llm_client, mock_semantic_cache):
+    """Kiểm tra generate_stream với graph_facts: dùng chat_complete (draft+correct) thay vì stream."""
+    mock_llm_client.chat_complete.return_value = "Corrected answer"
 
     generator = AnswerGenerator()
-    list(generator.generate_stream(
-        query="test", retrieved_chunks=[],
+    results = list(generator.generate_stream(
+        query="test", retrieved_chunks=[_make_chunk()],
         graph_facts=["Python is great"],
         graph_summary="Summary"
     ))
 
-    mock_llm_client.chat_complete_stream.assert_called_once()
+    # Với graph_facts → dùng chat_complete 2 lần (draft + correction), không dùng chat_complete_stream
+    assert mock_llm_client.chat_complete.call_count == 2
+    mock_llm_client.chat_complete_stream.assert_not_called()
+    # Kết quả stream word-by-word từ corrected answer
+    full_text = "".join(results)
+    assert "Corrected answer" in full_text
 
 
 def test_generate_with_chat_history(mock_llm_client, mock_semantic_cache, mocker):
@@ -208,7 +261,7 @@ def test_generate_with_chat_history(mock_llm_client, mock_semantic_cache, mocker
     mock_pb.build_user_prompt.return_value = "user"
 
     generator = AnswerGenerator()
-    generator.generate(query="test", retrieved_chunks=[], chat_history="User: hi\nAI: hello")
+    generator.generate(query="test", retrieved_chunks=[_make_chunk()], chat_history="User: hi\nAI: hello")
 
     mock_pb.build_user_prompt.assert_called_once()
     call_kwargs = mock_pb.build_user_prompt.call_args

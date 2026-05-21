@@ -87,6 +87,8 @@ def test_chat_rag_cache_hit(mock_aistore):
     data = response.json()
     assert data["answer"] == "Cached answer"
     assert data["cached"] is True
+    # check_cache được gọi với collection_name
+    mock_aistore.cache.check_cache.assert_called_once_with("hello", collection_name="test_col")
     # LLM generator không được gọi
     mock_aistore.generator.generate.assert_not_called()
 
