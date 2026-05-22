@@ -1,8 +1,11 @@
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, Request
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, Dict as TypingDict
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 import os
 import sys
 import uuid
@@ -24,7 +27,13 @@ from src.cache.semantic_cache import SemanticCache
 from src.api.auth import require_api_key
 
 logger = setup_logger("YouRAG_API")
+
+# Rate limiter — dùng IP address làm key
+limiter = Limiter(key_func=get_remote_address)
+
 app = FastAPI(title="YouRAG Backend API", version="1.0.0")
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.add_middleware(
     CORSMiddleware,
@@ -165,7 +174,8 @@ async def delete_collection(collection_name: str, _: str = Depends(require_api_k
 
 
 @app.post("/ingest")
-async def ingest_video(req: IngestRequest, background_tasks: BackgroundTasks, _: str = Depends(require_api_key)):
+@limiter.limit("5/minute")
+async def ingest_video(request: Request, req: IngestRequest, background_tasks: BackgroundTasks, _: str = Depends(require_api_key)):
     """Khởi động ingest video bất đồng bộ. Trả về job_id để theo dõi tiến độ."""
     job_id = str(uuid.uuid4())
     _ingest_jobs[job_id] = {"status": "queued", "url": req.url}
@@ -201,7 +211,8 @@ async def build_graph(collection: str, _: str = Depends(require_api_key)):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/chat")
-async def chat_rag(req: ChatRequest, _: str = Depends(require_api_key)):
+@limiter.limit("20/minute")
+async def chat_rag(request: Request, req: ChatRequest, _: str = Depends(require_api_key)):
     try:
         session_id = req.session_id or str(uuid.uuid4())
         history_mgr = ChatHistoryManager(session_id=session_id, collection_name=req.collection)
@@ -298,7 +309,8 @@ async def get_chat_history(session_id: str, collection: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/chat/stream")
-async def chat_rag_stream(req: ChatRequest, _: str = Depends(require_api_key)):
+@limiter.limit("20/minute")
+async def chat_rag_stream(request: Request, req: ChatRequest, _: str = Depends(require_api_key)):
     """Endpoint trả về Streaming Response với Global Context."""
     try:
         session_id = req.session_id or str(uuid.uuid4())
@@ -393,7 +405,8 @@ async def chat_rag_stream(req: ChatRequest, _: str = Depends(require_api_key)):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/suggestions/{collection}")
-async def get_suggestions(collection: str, _: str = Depends(require_api_key)):
+@limiter.limit("10/minute")
+async def get_suggestions(request: Request, collection: str, _: str = Depends(require_api_key)):
     """Generate 4 câu hỏi gợi ý dựa trên nội dung video."""
     try:
         summary = AIStore.summarizer.summarize(collection)
@@ -411,7 +424,8 @@ async def get_suggestions(collection: str, _: str = Depends(require_api_key)):
 
 
 @app.get("/summarize/{collection}")
-async def get_summary(collection: str, _: str = Depends(require_api_key)):
+@limiter.limit("10/minute")
+async def get_summary(request: Request, collection: str, _: str = Depends(require_api_key)):
     try:
         summary = AIStore.summarizer.summarize(collection)
         return {"summary": summary}
@@ -419,7 +433,8 @@ async def get_summary(collection: str, _: str = Depends(require_api_key)):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/summarize/stream/{collection}")
-async def get_summary_stream(collection: str, _: str = Depends(require_api_key)):
+@limiter.limit("10/minute")
+async def get_summary_stream(request: Request, collection: str, _: str = Depends(require_api_key)):
     """Endpoint tóm tắt video theo kiểu Streaming."""
     try:
         return StreamingResponse(
