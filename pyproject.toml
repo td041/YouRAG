@@ -20,7 +20,7 @@ youtube-transcript-api = "1.2.4"
 pytubefix = "10.3.8"
 requests = ">=2.32.2"
 groq = "1.0.0"
-openai = "1.14.2"
+openai = ">=1.14.2"
 rank-bm25 = "0.2.2"
 sentence-transformers = "2.6.1"
 httpx = "<0.28.0"
@@ -37,7 +37,7 @@ zenml = {extras = ["server"], version = "^0.94.0"}
 ragas = "^0.4.3"
 langchain = "^0.2.0"
 langchain-community = "^0.2.0"
-langchain-openai = "^0.1.0"
+langchain-openai = ">=0.1.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "8.1.1"
