@@ -21,7 +21,8 @@ class Settings(BaseSettings):
     API_KEY: Optional[SecretStr] = None  # Bearer token bảo vệ các endpoint write
     OPENAI_API_KEY: Optional[SecretStr] = None
     GROQ_API_KEY: Optional[SecretStr] = None
-    GEMINI_API_KEY: Optional[SecretStr] = None  # Fallback khi Groq rate limit
+    GEMINI_API_KEY: Optional[SecretStr] = None  # Production fallback khi Groq rate limit
+    GEMINI_EVAL_API_KEY: Optional[SecretStr] = None  # Riêng cho RAGAS benchmark evaluator
     JINA_API_KEY: Optional[SecretStr] = None  # Late Chunking (jina-embeddings-v3)
 
     # 3. Vector Database Engine (QDRANT VƯƠNG GIẢ)

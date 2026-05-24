@@ -21,10 +21,19 @@ from src.engine.ranking.cross_encoder import CrossEncoderReranker
 from src.engine.generation.answer_generator import AnswerGenerator
 from src.engine.generation.summarizer import VideoSummarizer
 from src.engine.chat.history import ChatHistoryManager
+from src.core.config import settings
 from src.core.postgres import init_db
 from src.core.logger import setup_logger
 from src.cache.semantic_cache import SemanticCache
 from src.api.auth import require_api_key
+import re
+import json
+
+_YOUTUBE_URL_RE = re.compile(
+    r"^(https?://)?(www\.)?"
+    r"(youtube\.com/(watch\?.*v=|shorts/|embed/)|youtu\.be/)"
+    r"[A-Za-z0-9_\-]{11}"
+)
 
 logger = setup_logger("YouRAG_API")
 
@@ -103,26 +112,98 @@ class ChatRequest(BaseModel):
 def read_root():
     return {"status": "online", "message": "YouRAG API is ready."}
 
+
+@app.get("/health")
+def health_check():
+    """Health check endpoint for Railway/Vercel/Docker. Returns 200 if all critical services are up."""
+    checks: TypingDict[str, str] = {}
+    healthy = True
+
+    # Qdrant
+    try:
+        db_instance.client.get_collections()
+        checks["qdrant"] = "ok"
+    except Exception as e:
+        checks["qdrant"] = f"error: {e}"
+        healthy = False
+
+    # Redis
+    try:
+        r = _get_redis()
+        if r:
+            r.ping()
+            checks["redis"] = "ok"
+        else:
+            checks["redis"] = "unavailable (in-memory fallback active)"
+    except Exception as e:
+        checks["redis"] = f"error: {e}"
+
+    # LLM models loaded
+    checks["generator"] = "ok" if AIStore.generator else "not loaded"
+    checks["reranker"] = "ok" if AIStore.reranker else "not loaded"
+
+    status_code = 200 if healthy else 503
+    from fastapi.responses import JSONResponse
+    return JSONResponse(
+        status_code=status_code,
+        content={"status": "healthy" if healthy else "degraded", "checks": checks}
+    )
+
 # Collections dùng nội bộ — không hiển thị trong library
 _INTERNAL_COLLECTIONS = {"semantic_cache"}
 
-# Job store cho async ingest (in-memory, đủ cho single-node deployment)
-_ingest_jobs: TypingDict[str, dict] = {}
+# ── Redis job store ──────────────────────────────────────────────────────────
+# Fallback về in-memory dict nếu Redis không kết nối được (dev mode)
+_JOB_TTL = 60 * 60 * 24  # 24 giờ
+_ingest_jobs_fallback: TypingDict[str, dict] = {}
+_redis_client = None
+
+def _get_redis():
+    global _redis_client
+    if _redis_client is None:
+        try:
+            import redis as redis_lib
+            r = redis_lib.from_url(settings.REDIS_URL, decode_responses=True, socket_connect_timeout=2)
+            r.ping()
+            _redis_client = r
+            logger.info("✅ Redis job store connected")
+        except Exception as e:
+            logger.warning(f"⚠️  Redis unavailable ({e}) — using in-memory job store")
+    return _redis_client
+
+def _job_set(job_id: str, data: dict) -> None:
+    r = _get_redis()
+    if r:
+        r.setex(f"ingest_job:{job_id}", _JOB_TTL, json.dumps(data))
+    else:
+        _ingest_jobs_fallback[job_id] = data
+
+def _job_get(job_id: str) -> Optional[dict]:
+    r = _get_redis()
+    if r:
+        raw = r.get(f"ingest_job:{job_id}")
+        return json.loads(raw) if raw else None
+    return _ingest_jobs_fallback.get(job_id)
+
+def _job_update(job_id: str, patch: dict) -> None:
+    data = _job_get(job_id) or {}
+    data.update(patch)
+    _job_set(job_id, data)
 
 
 def _run_ingest_job(job_id: str, url: str, use_contextual: bool, use_late_chunking: bool) -> None:
     """Background task: chạy ingest và cập nhật trạng thái job."""
-    _ingest_jobs[job_id]["status"] = "running"
+    _job_update(job_id, {"status": "running"})
     try:
         pipeline = IngestionPipeline(
             use_contextual_enrichment=use_contextual,
             use_late_chunking=use_late_chunking,
         )
         result = pipeline.run(url)
-        _ingest_jobs[job_id].update({"status": "done", "result": result})
+        _job_update(job_id, {"status": "done", "result": result})
     except Exception as e:
         logger.error(f"[IngestJob {job_id}] failed: {e}")
-        _ingest_jobs[job_id].update({"status": "error", "error": str(e)})
+        _job_update(job_id, {"status": "error", "error": str(e)})
 
 @app.get("/collections")
 def list_collections():
@@ -177,8 +258,10 @@ async def delete_collection(collection_name: str, _: str = Depends(require_api_k
 @limiter.limit("5/minute")
 async def ingest_video(request: Request, req: IngestRequest, background_tasks: BackgroundTasks, _: str = Depends(require_api_key)):
     """Khởi động ingest video bất đồng bộ. Trả về job_id để theo dõi tiến độ."""
+    if not _YOUTUBE_URL_RE.match(req.url.strip()):
+        raise HTTPException(status_code=422, detail="Invalid YouTube URL. Supported formats: youtube.com/watch?v=..., youtu.be/..., youtube.com/shorts/...")
     job_id = str(uuid.uuid4())
-    _ingest_jobs[job_id] = {"status": "queued", "url": req.url}
+    _job_set(job_id, {"status": "queued", "url": req.url})
     background_tasks.add_task(
         _run_ingest_job, job_id, req.url, req.use_contextual, req.use_late_chunking
     )
@@ -188,7 +271,7 @@ async def ingest_video(request: Request, req: IngestRequest, background_tasks: B
 @app.get("/ingest/status/{job_id}")
 def ingest_status(job_id: str):
     """Kiểm tra trạng thái job ingest: queued → running → done / error."""
-    job = _ingest_jobs.get(job_id)
+    job = _job_get(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job không tồn tại")
     return job
