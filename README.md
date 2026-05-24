@@ -6,380 +6,211 @@
   <img src="https://img.shields.io/badge/Qdrant-Vector_DB-DC382D?logo=qdrant&logoColor=white" alt="Qdrant"/>
   <img src="https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white" alt="Docker"/>
   <img src="https://img.shields.io/badge/CI-GitHub_Actions-2088FF?logo=githubactions&logoColor=white" alt="CI"/>
+  <img src="https://img.shields.io/badge/Coverage-83%25-4CAF50?logo=pytest&logoColor=white" alt="Coverage"/>
 </p>
 
-# 🧠 YouRAG — Advanced YouTube RAG with Knowledge Graph & Self-Correction
+# YouRAG — Advanced YouTube RAG with Knowledge Graph & Self-Correction
 
-**YouRAG** là hệ thống **Retrieval-Augmented Generation (RAG)** thế hệ mới, biến bất kỳ video YouTube nào thành một nguồn tri thức có thể truy vấn và hỏi đáp bằng AI ở mức chuyên gia. Hệ thống kết hợp **Knowledge Graph**, **Hybrid Search**, **Cross-Encoder Reranking** và **Graph-based Self-Correction** — những kỹ thuật SOTA nhất trong lĩnh vực RAG hiện nay.
+**YouRAG** is a production-grade **Retrieval-Augmented Generation (RAG)** system that turns any YouTube video into a queryable knowledge base. It combines **Knowledge Graph**, **Hybrid Search**, **Cross-Encoder Reranking**, **Citation Grounding**, and **Graph-based Self-Correction** — state-of-the-art techniques that eliminate hallucination at the architecture level.
 
-> **Không chỉ là chatbot video.** YouRAG xây dựng một "bộ não kỹ thuật số" cho mỗi video: trích xuất thực thể, dựng đồ thị quan hệ, và bắt buộc AI phải đối chiếu sự thật trước khi trả lời — **loại bỏ ảo giác (hallucination) ở mức kiến trúc.**
+> Not just a video chatbot. YouRAG builds a "digital brain" for each video: extracts entities, builds a knowledge graph, validates every citation, and forces the AI to cross-check facts before answering.
 
 ---
 
-## ⚡ Kiến trúc Hệ thống (System Architecture)
+## Architecture
 
-```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                          🎬 YOUTUBE VIDEO URL                              │
-└────────────────────────────────┬─────────────────────────────────────────────┘
-                                 │
-                    ┌────────────▼────────────┐
-                    │   YouTubeLoader          │  pytubefix + youtube-transcript-api
-                    │   (Parallel Fetch)       │  Tải metadata + transcript song song
-                    └────────────┬─────────────┘
-                                 │
-            ┌────────────────────▼────────────────────┐
-            │       SemanticChunker (SOTA 2-Phase)     │
-            │                                          │
-            │  Phase 1: Pause-Aware Atomic Splitting   │  Gộp dòng transcript → câu hoàn chỉnh
-            │           (Pause > 1.5s = ngắt topic)    │  dựa trên khoảng lặng người nói
-            │                                          │
-            │  Phase 2: Vector Semantic Grouping       │  Nhúng vector (all-MiniLM-L6-v2)
-            │           Dynamic Percentile Threshold   │  Dò "thung lũng ngữ nghĩa" để cắt chunk
-            └────────────┬─────────────────────────────┘
-                         │
-         ┌───────────────┼───────────────┐
-         ▼                               ▼
-┌──────────────────┐          ┌─────────────────────────┐
-│ ContextualEnricher│          │   GraphExtractor         │
-│ (Anthropic Tech)  │          │   (Rule-based NER)       │
-│                   │          │                           │
-│ LLM bơm 1-2 câu  │          │ Trích xuất Entity +       │
-│ ngữ cảnh gốc vào │          │ Relation → NetworkX Graph │
-│ đầu mỗi chunk    │          │                           │
-└────────┬──────────┘          └──────────┬────────────────┘
-         │                                │
-         └────────────┬───────────────────┘
-                      ▼
-         ┌─────────────────────────┐         ┌──────────────────┐
-         │   Qdrant Vector DB       │         │  NetworkX Graph   │
-         │   BAAI/bge-m3 (1024-dim) │         │  Knowledge Graph  │
-         │   Cosine HNSW Index      │         │  (.gpickle)       │
-         └─────────────────────────┘         └──────────────────┘
-                      │                                │
-═══════════════════════════════════════════════════════════════════
-                      │         🔍 QUERY TIME          │
-                      ▼                                ▼
-         ┌─────────────────────┐          ┌──────────────────────┐
-         │   HybridRetriever    │          │   GraphRetriever      │
-         │                      │          │                       │
-         │  Dense (Qdrant)      │          │  Multi-hop Traversal  │
-         │  + Sparse (BM25)     │          │  Entity Extraction    │
-         │  → RRF Fusion        │          │  Subgraph Matching    │
-         │    (α=0.5, k=60)     │          │                       │
-         └──────────┬───────────┘          └───────────┬───────────┘
-                    │                                  │
-                    ▼                                  │
-         ┌─────────────────────┐                       │
-         │ CrossEncoderReranker │                       │
-         │ mmarco-mMiniLMv2     │                       │
-         │ (Logit Scoring)      │                       │
-         └──────────┬───────────┘                       │
-                    │                                   │
-                    └──────────────┬────────────────────┘
-                                   ▼
-                    ┌──────────────────────────────┐
-                    │     AnswerGenerator           │
-                    │                               │
-                    │  1. PromptBuilder → LLM Call   │  Llama-3.3-70B (Groq)
-                    │  2. Draft Answer              │
-                    │  3. 🔄 Self-Correction:       │  So sánh draft vs Graph Facts
-                    │     AI audit + auto-fix        │  Phát hiện mâu thuẫn → sửa lỗi
-                    │  4. Final Answer + [mm:ss]     │  Trích dẫn mốc thời gian
-                    └──────────────────────────────┘
+```mermaid
+flowchart TD
+    URL([YouTube URL]) --> YL[YouTubeLoader\npytubefix + transcript-api]
+    YL -->|no captions| WH[WhisperTranscriber\nfaster-whisper STT]
+    YL -->|has captions| SC
+    WH --> SC[SemanticChunker\npause-aware + vector valleys]
+    SC -->|optional| CE[ContextualEnricher\nLLM prefix injection]
+    SC -->|optional| LC[LateChunkingEmbedder\nJina jina-embeddings-v3]
+    CE --> GE
+    LC --> GE
+    SC --> GE[GraphExtractor\nrule-based entity triples]
+    GE --> QD[(Qdrant VectorDB\nBAAI/bge-m3 · 1024-dim\ncosine HNSW)]
+    GE --> KG[(Knowledge Graph\nNetworkX DiGraph)]
+
+    Q([User Query]) --> HR[HybridRetriever\nDense + BM25 · RRF Fusion]
+    Q --> GR[GraphRetriever\nmulti-hop traversal]
+    QD --> HR
+    KG --> GR
+    HR --> CR[CrossEncoderReranker\nmmarco-mMiniLMv2]
+    CR --> AG[AnswerGenerator]
+    GR --> AG
+    AG -->|graph_facts present| SC2[Self-Correction\nLLM audits draft vs graph facts]
+    AG -->|no graph_facts| CG[Citation Grounding\nremove fabricated timestamps]
+    SC2 --> CG
+    CG --> ANS([Final Answer\n+ mm:ss Citations])
 ```
 
 ---
 
-## 🔥 Điểm nhấn Kỹ thuật (Technical Highlights)
+## Key Features
 
-### 🧬 Semantic Chunking — Không còn cắt văn bản "bừa bãi"
-Thay vì cắt theo số ký tự cố định (naive chunking), YouRAG sử dụng thuật toán **2 giai đoạn**:
-1. **Pause-Aware Splitting**: Phân tích khoảng lặng giữa các dòng transcript (>1.5s = chuyển topic). Kết hợp LLM để phục hồi dấu câu cho transcript thô.
-2. **Vector Semantic Valleys**: Nhúng vector từng câu, tính cosine similarity giữa các câu liền kề, sử dụng **Dynamic Percentile Threshold** (top 15% điểm rớt mạnh nhất) để xác định điểm cắt. Ngưỡng này **tự co giãn theo từng video**, không hardcode.
+### Anti-Hallucination Stack
+- **Strict system prompt** — "If not in the document, say you don't know"
+- **Self-Correction** — LLM audits its own draft against Knowledge Graph facts before returning
+- **Citation Grounding** — Every `[mm:ss]` in the answer is validated against retrieved chunks; fabricated citations are removed
+- **No-context early return** — Returns "not found" immediately when no chunks are retrieved, instead of letting the LLM hallucinate from general knowledge
+- **Stream self-correction** — In streaming mode with graph facts, draft is generated + corrected first, then streamed word-by-word
 
-### 🕸️ Knowledge Graph RAG — Vượt xa Vector Search
-Vector search chỉ tìm được "đoạn văn giống nhau". **Graph RAG** tìm được **quan hệ ẩn** mà vector bị mù:
-- Trích xuất bộ ba `(Entity → Relation → Entity)` từ mỗi chunk
-- Xây dựng đồ thị tri thức bằng **NetworkX**
-- Hỗ trợ **multi-hop reasoning**: "A liên quan B, B liên quan C → A liên quan C"
-- Cung cấp **Graph Facts** làm bằng chứng cho bước Self-Correction
+### RAG Pipeline
+- **2-Phase Semantic Chunking**: Pause-aware atomic splitting + vector semantic valley detection (dynamic percentile threshold, adapts per video)
+- **Knowledge Graph**: Extracts `(subject, predicate, object)` triples → NetworkX directed graph → multi-hop reasoning
+- **Hybrid Search + RRF**: Dense (Qdrant bge-m3) + Sparse (BM25) fused with Reciprocal Rank Fusion
+- **Cross-Encoder Reranking**: mmarco-mMiniLMv2 for precise relevance scoring
+- **Semantic Cache**: Per-collection Qdrant-backed cache — same question on different videos never cross-contaminates
 
-### 🔍 Hybrid Search + Reciprocal Rank Fusion (RRF)
-Kết hợp 2 paradigm tìm kiếm:
-| Engine | Vai trò | Ưu điểm |
-|--------|---------|---------|
-| **Dense** (Qdrant + bge-m3) | Tìm theo ý nghĩa ngữ nghĩa | Hiểu đồng nghĩa, paraphrase |
-| **Sparse** (BM25) | Tìm theo từ khóa chính xác | Bắt tên riêng, số liệu, thuật ngữ |
+### Production Hardening
+- **API key authentication** — `X-API-Key` header protects all write endpoints
+- **Rate limiting** — slowapi: 20 req/min for chat, 5 req/min for ingest
+- **YouTube URL validation** — Backend validates URL before queuing job (HTTP 422 on invalid)
+- **Redis job store** — Ingest jobs persist in Redis with 24h TTL; auto-fallback to in-memory in dev
+- **`/health` endpoint** — Checks Qdrant, Redis, Generator, Reranker; returns `200` or `503`
+- **Gemini auto-fallback** — Transparent switch to Gemini when Groq hits rate limit (429)
+- **Whisper STT fallback** — Auto-transcribes videos without captions via faster-whisper
 
-Hai nguồn kết quả được hòa trộn bằng thuật toán **RRF** (`α=0.5, k=60`) — công bằng, không thiên vị engine nào.
-
-### ⚖️ Cross-Encoder Reranking — Bộ lọc chất lượng cuối cùng
-Sau Hybrid Search, các ứng viên được chấm điểm lại bằng **mmarco-mMiniLMv2** (Cross-Encoder đa ngôn ngữ). Khác với Bi-Encoder (so khoảng cách vector), Cross-Encoder cho Query+Document vào model **cùng lúc** → điểm đánh giá chính xác tuyệt đối, loại bỏ nhiễu triệt để.
-
-### 🧠 Graph-based Self-Correction — AI tự kiểm tra bản thân
-Đây là tính năng **SOTA đỉnh cao** của YouRAG:
-1. LLM tạo **bản nháp** câu trả lời
-2. Hệ thống so sánh bản nháp với **Graph Facts** (sự thật từ đồ thị tri thức)
-3. Nếu phát hiện **mâu thuẫn hoặc ảo giác** → LLM được gọi lần 2 để **tự sửa lỗi**
-4. Chỉ trả về câu trả lời đã qua kiểm toán
-
-> *"AI không chỉ trả lời — AI còn phải chứng minh câu trả lời không sai."*
-
-### 💬 Persistent Chat History — Kiến trúc 2 tầng
-Lịch sử trò chuyện được quản lý bằng kiến trúc **dual-layer**:
-| Tầng | Công nghệ | Vai trò |
-|------|-----------|---------|
-| **Speed Layer** | Redis | Cache tốc độ cao, TTL 24h |
-| **Durability Layer** | PostgreSQL | Lưu trữ vĩnh viễn, fallback khi Redis gặp sự cố |
-
-Hệ thống tự động **backfill** cache Redis từ PostgreSQL khi xảy ra cache miss.
+### Frontend (Next.js 14)
+- Dark / Light mode toggle
+- Mobile responsive — drawer sidebar + tab layout on small screens
+- Dynamic welcome suggestions — 4 questions generated from actual video content
+- Source chips with seek-to-timestamp + open YouTube at exact timestamp
+- Simplified ingest progress bar
 
 ---
 
-## 🛠️ Tech Stack
+## Tech Stack
 
-| Layer | Technology | Role |
-|-------|-----------|------|
-| **Backend API** | FastAPI 0.110 + Uvicorn | RESTful API + Streaming Response |
-| **Frontend** | Next.js 14 (React + TypeScript + Tailwind) | Glassmorphism UI, Dark Mode |
-| **Vector DB** | Qdrant (Rust-based, HNSW) | Tìm kiếm vector siêu tốc |
-| **Graph DB** | NetworkX | Đồ thị tri thức in-memory |
-| **Relational DB** | PostgreSQL 15 | Chat history persistence |
-| **Cache** | Redis 7 | Session cache, semantic cache |
-| **Embedding** | `BAAI/bge-m3` (1024-dim, multilingual) | Nhúng vector đa ngôn ngữ |
-| **Chunking Embed** | `all-MiniLM-L6-v2` | Semantic valley detection |
-| **Reranker** | `mmarco-mMiniLMv2-L12-H384-v1` | Cross-encoder chấm điểm chéo |
-| **LLM (Main)** | `llama-3.3-70b-versatile` via Groq | Generation + Self-Correction |
-| **LLM (Fast)** | `llama-3.1-8b-instant` via Groq | Contextual Enrichment |
-| **LLM (Fallback)** | OpenAI / Ollama | Dự phòng khi Groq không khả dụng |
-| **MLOps** | ZenML | Pipeline orchestration + checkpointing |
-| **Evaluation** | RAGAS Framework | LLM-as-a-judge benchmark |
-| **CI/CD** | GitHub Actions | Lint (Ruff) + Security (Bandit) + Tests |
-| **Containerization** | Docker Compose + BuildKit | Multi-service orchestration |
-| **Dependency Mgmt** | Poetry | Deterministic builds via lockfile |
+| Component | Technology |
+|---|---|
+| Backend API | FastAPI 0.110 + Uvicorn |
+| Frontend | Next.js 14, TypeScript, Tailwind CSS |
+| Vector DB | Qdrant (HNSW, cosine similarity) |
+| Embeddings | BAAI/bge-m3 (1024-dim, multilingual) |
+| Reranker | cross-encoder/mmarco-mMiniLMv2-L12-H384-v1 |
+| LLM primary | Groq llama-3.3-70b-versatile |
+| LLM fallback | Gemini 2.0 Flash (auto on Groq 429) |
+| Chat history | PostgreSQL 15 + Redis 7 (dual-layer) |
+| BM25 | rank-bm25 |
+| Knowledge Graph | NetworkX (JSON serialization, no pickle) |
+| Evaluation | RAGAS framework |
+| Build | uv (Docker), Poetry (local/CI) |
+| CI/CD | GitHub Actions — Ruff + Bandit + Pytest |
 
 ---
 
-## 🏗️ Cấu trúc Dự án
+## Quick Start
 
-```
-YouRAG/
-├── src/
-│   ├── api/
-│   │   └── main.py                    # FastAPI endpoints + AIStore startup
-│   ├── core/
-│   │   ├── config.py                  # Pydantic Settings (SecretStr, Singleton)
-│   │   ├── database.py                # VectorDatabase singleton (Qdrant + bge-m3)
-│   │   ├── postgres.py                # PostgreSQL engine + retry init
-│   │   ├── logger.py                  # Centralized logging
-│   │   └── utils.py                   # format_timestamp() utility
-│   ├── engine/
-│   │   ├── ingestion/
-│   │   │   ├── pipeline.py            # ZenML pipeline + IngestionPipeline wrapper
-│   │   │   ├── youtube_loader.py      # Parallel fetch (pytubefix + transcript API)
-│   │   │   ├── chunker.py             # SemanticChunker (2-phase SOTA)
-│   │   │   ├── contextual_enricher.py # Anthropic contextual retrieval technique
-│   │   │   └── graph_extractor.py     # Rule-based entity/relation extraction
-│   │   ├── retrieval/
-│   │   │   ├── hybrid_search.py       # HybridRetriever (RRF fusion)
-│   │   │   ├── dense_search.py        # DenseRetriever (Qdrant vector search)
-│   │   │   ├── sparse_search.py       # SparseRetriever (BM25 in-memory)
-│   │   │   └── graph_rag.py           # KnowledgeGraphBuilder + GraphRetriever
-│   │   ├── generation/
-│   │   │   ├── answer_generator.py    # AnswerGenerator (Self-Correction RAG)
-│   │   │   ├── llm_client.py          # Multi-provider LLM (Groq/OpenAI/Ollama)
-│   │   │   ├── prompt_builder.py      # Dynamic prompt (Standard/Mindmap/Table)
-│   │   │   └── summarizer.py          # VideoSummarizer (full video summary)
-│   │   ├── ranking/
-│   │   │   └── cross_encoder.py       # CrossEncoderReranker (mmarco-mMiniLMv2)
-│   │   └── chat/
-│   │       └── history.py             # Dual-layer chat history (Redis + Postgres)
-│   ├── models/
-│   │   └── chat.py                    # SQLModel schemas (ChatSession, ChatMessage)
-│   ├── schema/
-│   │   └── models.py                  # Pydantic API models
-│   └── cache/
-│       └── semantic_cache.py          # SemanticCache (vector-based dedup)
-├── frontend/                          # Next.js 14 UI
-│   ├── app/                           # App Router (page.tsx, layout.tsx)
-│   ├── components/                    # ChatPanel, VideoPanel, Sidebar
-│   └── lib/                           # API client, types
-├── tests/
-│   ├── unit/                          # 14 test files, all mocked, CI-safe
-│   ├── integration/                   # Real AI + DB tests (requires API keys)
-│   └── benchmark/                     # RAGAS ablation study
-├── .github/workflows/
-│   ├── ci.yml                         # Lint + Security + Unit Tests + Integration
-│   └── benchmark.yml                  # RAGAS evaluation pipeline
-├── docker-compose.yml                 # 5 services: backend, frontend, qdrant, postgres, redis
-├── Dockerfile                         # Poetry-based, layer-cached, GPU-ready
-├── Makefile                           # 15+ shortcuts (build, up, rebuild, logs, test...)
-├── pyproject.toml                     # Poetry dependencies + Ruff + Pytest config
-└── poetry.lock                        # Deterministic dependency resolution
-```
-
----
-
-## 🚀 Khởi chạy Nhanh
-
-### Yêu cầu
+### Requirements
 - Docker + Docker Compose
-- NVIDIA GPU (khuyến nghị) hoặc CPU
-- Groq API Key ([Lấy miễn phí tại đây](https://console.groq.com))
+- [Groq API Key](https://console.groq.com/keys) (free)
 
-### 1. Clone & Cấu hình
+### 1. Clone & Configure
 
 ```bash
 git clone https://github.com/td041/YouRAG.git
 cd YouRAG
-make setup   # Tạo file .env từ template
+cp .env.example .env
+# Edit .env and set GROQ_API_KEY
 ```
 
-Mở file `.env` và điền API key:
-```env
-GROQ_API_KEY=gsk_xxxxx
-```
-
-### 2. Khởi chạy Hệ thống
+### 2. Start
 
 ```bash
-make rebuild   # Build + Start tất cả 5 services
+docker compose up -d --build
 ```
 
-### 3. Truy cập
+### 3. Access
 
-| Service | URL | Mô tả |
-|---------|-----|--------|
-| **Frontend** | http://localhost:3000 | Giao diện chat |
-| **Backend API** | http://localhost:8000 | REST API |
-| **API Docs** | http://localhost:8000/docs | Swagger UI |
+| Service | URL |
+|---|---|
+| Frontend | http://localhost:3000 |
+| Backend API | http://localhost:8000 |
+| API Docs | http://localhost:8000/docs |
+| Health Check | http://localhost:8000/health |
 
 ---
 
-## 📋 Makefile Commands
+## API Endpoints
 
-```bash
-make help           # Xem tất cả lệnh
-make setup          # Tạo .env từ template
-make build          # Build Docker images
-make up             # Khởi chạy (background)
-make down           # Dừng hệ thống
-make rebuild        # Down → Build (cached) → Up
-make rebuild-fresh  # Down → Build (no-cache) → Up
-make logs           # Xem logs tất cả services
-make logs-backend   # Xem logs backend
-make status         # Trạng thái containers + GPU
-make shell-backend  # SSH vào container backend
-make shell-db       # Vào PostgreSQL CLI
-make test           # Chạy unit tests
-make lint           # Kiểm tra code (Ruff)
-make clean          # Xóa containers
-make clean-all      # Xóa tất cả kể cả data ⚠️
-```
+| Method | Endpoint | Auth | Description |
+|---|---|---|---|
+| `GET` | `/` | — | Status check |
+| `GET` | `/health` | — | Deep health check (Qdrant, Redis, models) |
+| `GET` | `/collections` | — | List ingested videos |
+| `POST` | `/ingest` | ✅ | Ingest YouTube video (async, returns job_id) |
+| `GET` | `/ingest/status/{job_id}` | — | Poll ingest job status |
+| `POST` | `/chat` | ✅ | RAG chat (sync) |
+| `POST` | `/chat/stream` | ✅ | RAG chat (streaming) |
+| `GET` | `/suggestions/{collection}` | ✅ | Get 4 dynamic suggested questions |
+| `GET` | `/summarize/{collection}` | ✅ | Video summary |
+| `GET` | `/history/{session_id}` | — | Chat history |
+| `POST` | `/graph/build/{collection}` | ✅ | Build/rebuild knowledge graph |
+| `DELETE` | `/collections/{name}` | ✅ | Delete video |
+
+Protected endpoints require `X-API-Key` header when `API_KEY` is set in `.env`.
 
 ---
 
-## 🧪 Testing & Quality
+## Testing
 
-### Unit Tests (14 files, ~60% coverage)
 ```bash
+# Unit tests (211 tests, 83% coverage, all mocked)
 poetry run pytest tests/unit/ -v --cov=src --cov-report=term-missing
-```
-- Tất cả external I/O được mock (Qdrant, Redis, Postgres, LLM APIs)
-- Chạy trong < 2 giây, CI-safe
 
-### Integration Tests
-```bash
-poetry run pytest tests/integration/ -v
-```
-- Yêu cầu Groq API key và Docker services đang chạy
+# Lint
+poetry run ruff check src/ tests/
 
-### Code Quality
-```bash
-poetry run ruff check src/ tests/    # Lint
-poetry run bandit -r src/ -ll        # Security scan
-poetry run mypy src/ --ignore-missing-imports  # Type check
-```
+# Security
+poetry run bandit -r src/ -ll
 
-### RAGAS Benchmark (Ablation Study)
-```bash
+# RAGAS benchmark (requires GEMINI_EVAL_API_KEY)
 poetry run python tests/run_benchmark.py --evaluate
 ```
-Đo lường 4 chỉ số vàng qua từng tầng SOTA:
-
-| Metric | Naive RAG | + Hybrid | + Reranker | + Self-Correction |
-|--------|-----------|----------|------------|-------------------|
-| **Faithfulness** | Baseline | ↑ | ↑↑ | ↑↑↑ |
-| **Answer Relevancy** | Baseline | ↑ | ↑↑ | ↑↑↑ |
-| **Context Precision** | Baseline | ↑↑ | ↑↑↑ | ↑↑↑ |
-| **Context Recall** | Baseline | ↑ | ↑↑ | ↑↑ |
 
 ---
 
-## 🐳 Docker Architecture
+## Environment Variables
 
-```yaml
-# 5 services, 1 network, GPU-ready
-services:
-  qdrant       # Vector DB (port 6333)
-  postgres     # Chat history (port 5432)
-  redis        # Session cache (port 6379)
-  backend      # FastAPI + AI Models (port 8000, GPU)
-  frontend     # Next.js UI (port 3000)
-```
+See [.env.example](.env.example) for full reference.
 
-### Tối ưu hóa Docker
-- **Layer Caching**: Dependencies được cài trước source code → rebuild chỉ mất ~5s khi chỉ sửa code
-- **Model Caching**: Mount `~/.cache/huggingface` từ host → không tải lại ~4.8GB models mỗi lần start
-- **Poetry-based**: Sử dụng `poetry.lock` để đảm bảo reproducible builds
-- **BuildKit**: Bật `DOCKER_BUILDKIT=1` để build song song
+| Variable | Required | Description |
+|---|---|---|
+| `GROQ_API_KEY` | ✅ | Primary LLM |
+| `API_KEY` | Recommended | Protects write endpoints |
+| `GEMINI_API_KEY` | Optional | Production fallback when Groq rate-limits |
+| `GEMINI_EVAL_API_KEY` | Optional | Separate key for RAGAS benchmark |
+| `JINA_API_KEY` | Optional | Late Chunking embeddings |
+| `QDRANT_SERVER_URL` | Production | Qdrant Cloud URL |
 
 ---
 
-## 🔌 API Endpoints
+## Roadmap
 
-| Method | Endpoint | Mô tả |
-|--------|----------|--------|
-| `GET` | `/` | Health check |
-| `GET` | `/collections` | Danh sách video đã ingest |
-| `POST` | `/ingest` | Ingest video YouTube mới |
-| `POST` | `/chat` | Chat RAG (sync) |
-| `POST` | `/chat/stream` | Chat RAG (streaming) |
-| `GET` | `/history/{session_id}` | Lấy lịch sử chat |
-| `POST` | `/graph/build/{collection}` | Build/Rebuild Knowledge Graph |
-| `GET` | `/summarize/{collection}` | Tóm tắt video |
-| `GET` | `/summarize/stream/{collection}` | Tóm tắt video (streaming) |
-
----
-
-## 🗺️ Roadmap
-
-- [x] Semantic Chunking (Pause-aware + Vector valleys)
-- [x] Contextual Enrichment (Anthropic technique)
-- [x] Knowledge Graph (NetworkX + Rule-based NER)
-- [x] Hybrid Search (Dense + BM25 + RRF)
-- [x] Cross-Encoder Reranking (mmarco-mMiniLMv2)
+- [x] Semantic Chunking (pause-aware + vector valleys)
+- [x] Knowledge Graph RAG (entity extraction + multi-hop)
+- [x] Hybrid Search + RRF Fusion
+- [x] Cross-Encoder Reranking
 - [x] Graph-based Self-Correction
-- [x] Streaming Response + [mm:ss] Citations
+- [x] Citation Grounding (no fabricated timestamps)
+- [x] Streaming + [mm:ss] Citations
+- [x] Whisper STT fallback
 - [x] Persistent Chat History (Redis + PostgreSQL)
-- [x] Next.js Frontend (Glassmorphism, Dark Mode)
-- [x] Docker Compose (5 services, GPU-ready)
-- [x] CI/CD (GitHub Actions: Lint + Security + Tests)
-- [x] RAGAS Ablation Benchmark
-- [ ] Semantic Caching (GPTCache/Redis Vector)
-- [ ] Semantic Router (Intent classification)
-- [ ] Observability (Phoenix/LangSmith tracing)
+- [x] Dark/Light mode + Mobile responsive UI
+- [x] API Key auth + Rate limiting
+- [x] Redis job store + /health endpoint
+- [x] Gemini auto-fallback
+- [x] Docker Compose (5 services) + uv fast builds
+- [x] CI/CD (Ruff + Bandit + Pytest, 83% coverage)
 - [ ] Multi-video cross-referencing
-
----
-
-## 📄 License
-
-MIT License — Free to use, modify, and distribute.
+- [ ] Deploy to Railway + Vercel
+- [ ] Sentry monitoring
 
 ---
 
 <p align="center">
-  <b>Built with 🔥 by <a href="https://github.com/td041">td041</a></b>
+  <b>Built by <a href="https://github.com/td041">td041</a></b>
 </p>
