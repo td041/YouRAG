@@ -95,7 +95,7 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8000/ || exit 1"]
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health | grep -q 'healthy' || exit 1"]
       interval: 15s
       timeout: 10s
       retries: 10
