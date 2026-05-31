@@ -21,7 +21,7 @@ class HybridRetriever:
         self.rrf_k = rrf_k
         self.alpha = alpha
         
-        # Load 2 Retriever với top_k lớn hơn một chút để dung sai khi hợp nhất RRF
+        # Singleton retrievers — BM25 index cached across requests
         self.dense = DenseRetriever(top_k=top_k * 2)
         self.sparse = SparseRetriever(top_k=top_k * 2)
 

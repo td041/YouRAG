@@ -15,11 +15,15 @@ def cache_dir(tmp_path):
 
 @pytest.fixture
 def mock_llm(mocker):
-    """Mock LLMClient."""
+    """Mock LLMClient and Redis (no real I/O in unit tests)."""
     mock_cls = mocker.patch("src.engine.ingestion.contextual_enricher.LLMClient")
     mock_instance = MagicMock()
     mock_instance.chat_complete.return_value = "This is context."
     mock_cls.return_value = mock_instance
+
+    # Disable Redis so tests use local file fallback
+    mocker.patch("src.engine.ingestion.contextual_enricher.get_redis", return_value=None)
+
     return mock_instance
 
 

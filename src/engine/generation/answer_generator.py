@@ -71,7 +71,9 @@ class AnswerGenerator:
         def ts_to_secs(ts: str) -> float:
             parts = ts.split(":")
             try:
-                if len(parts) == 2:
+                if len(parts) == 3:  # H:MM:SS
+                    return int(parts[0]) * 3600 + int(parts[1]) * 60 + float(parts[2])
+                if len(parts) == 2:  # M:SS or MM:SS
                     return int(parts[0]) * 60 + float(parts[1])
                 return float(ts)
             except ValueError:
@@ -83,7 +85,8 @@ class AnswerGenerator:
                 return True  # không parse được → giữ nguyên
             return any(start - 5 <= t <= end + 10 for start, end in valid_ranges)
 
-        citations = re.findall(r'\[(\d+:\d{2})\]', answer)
+        # Match [M:SS], [MM:SS], [H:MM:SS] formats
+        citations = re.findall(r'\[(\d{1,2}:\d{2}(?::\d{2})?)\]', answer)
         invalid = [c for c in citations if not is_grounded(c)]
 
         if invalid:

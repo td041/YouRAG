@@ -10,7 +10,7 @@ import networkx as nx
 
 @pytest.fixture(autouse=True)
 def mock_graph_deps(mocker):
-    """Mock LLMClient and db_instance."""
+    """Mock LLMClient, db_instance, and Redis (no real I/O in unit tests)."""
     mock_llm_cls = mocker.patch("src.engine.retrieval.graph_rag.LLMClient")
     mock_llm = MagicMock()
     mock_llm.chat_complete.return_value = '[]'
@@ -18,6 +18,9 @@ def mock_graph_deps(mocker):
 
     mock_db = MagicMock()
     mocker.patch("src.engine.retrieval.graph_rag.db_instance", mock_db)
+
+    # Disable Redis so tests use local file fallback
+    mocker.patch("src.engine.retrieval.graph_rag.get_redis", return_value=None)
 
     return mock_llm, mock_db
 

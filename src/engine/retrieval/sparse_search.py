@@ -3,6 +3,8 @@ from rank_bm25 import BM25Okapi
 from src.core.database import db_instance
 from src.core.logger import logger
 
+_BM25_MAX_DOCS = 2000  # cap memory usage: ~2000 chunks × ~500 tokens ≈ 50MB max
+
 class SparseRetriever:
     """Tìm kiếm bằng thuật toán từ khóa BM25 (Sparse Retrieval).
     Qdrant chưa hỗ trợ BM25 native triệt để trên Local, nên ta phải load toàn bộ texts lên BM25Okapi in-memory.
@@ -26,10 +28,10 @@ class SparseRetriever:
         try:
             records = []
             offset = None
-            while True:
+            while len(records) < _BM25_MAX_DOCS:
                 result, next_offset = self.db.client.scroll(
                     collection_name=collection_name,
-                    limit=1000,
+                    limit=min(1000, _BM25_MAX_DOCS - len(records)),
                     offset=offset,
                     with_payload=True,
                     with_vectors=False
@@ -38,6 +40,8 @@ class SparseRetriever:
                 if next_offset is None:
                     break
                 offset = next_offset
+            if len(records) >= _BM25_MAX_DOCS:
+                logger.warning(f"[BM25] Collection '{collection_name}' hit {_BM25_MAX_DOCS} doc cap")
 
             if not records:
                 raise ValueError("Collection rỗng!")
