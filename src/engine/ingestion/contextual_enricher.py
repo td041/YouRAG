@@ -23,7 +23,11 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict, Optional
 
 from src.core.logger import logger
+from src.core.redis_client import get_redis
 from src.engine.generation.llm_client import LLMClient
+
+_CTX_REDIS_TTL = 60 * 60 * 24 * 30  # 30 days
+_CTX_KEY_PREFIX = "ctx_cache:"
 
 
 # ── Prompt chính xác theo paper Anthropic ────────────────────────────────────
@@ -88,6 +92,14 @@ class ContextualEnricher:
         return os.path.join(self.cache_dir, f"{key}.json")
 
     def _read_cache(self, key: str) -> Optional[str]:
+        # 1. Try Redis
+        r = get_redis()
+        if r:
+            val = r.get(f"{_CTX_KEY_PREFIX}{key}")
+            if val is not None:
+                return val
+
+        # 2. Fallback: local file
         path = self._cache_path(key)
         if os.path.exists(path):
             try:
@@ -98,12 +110,22 @@ class ContextualEnricher:
         return None
 
     def _write_cache(self, key: str, context: str):
+        # 1. Write to Redis (primary)
+        r = get_redis()
+        if r:
+            try:
+                r.setex(f"{_CTX_KEY_PREFIX}{key}", _CTX_REDIS_TTL, context)
+                return
+            except Exception as e:
+                logger.warning(f"Redis write failed, falling back to file: {e}")
+
+        # 2. Fallback: local file
         path = self._cache_path(key)
         try:
             with open(path, "w", encoding="utf-8") as f:
                 json.dump({"context": context}, f, ensure_ascii=False)
         except Exception as e:
-            logger.warning(f"Không ghi được cache: {e}")
+            logger.warning(f"Cache write failed: {e}")
 
     # ── Full text preparation ─────────────────────────────────────────────────
 

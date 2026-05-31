@@ -29,14 +29,18 @@ import networkx as nx
 from src.core.database import db_instance
 from src.core.logger import logger
 from src.core.config import settings
+from src.core.redis_client import get_redis
 from src.engine.generation.llm_client import LLMClient
+
+_GRAPH_REDIS_TTL = 60 * 60 * 24 * 90  # 90 days
+_GRAPH_KEY_PREFIX = "graph:"
 
 
 class KnowledgeGraphBuilder:
     """Xây dựng Knowledge Graph từ các chunks đã Ingest.
-    
+
     Pipeline:
-    Chunks → LLM Extract Triples → NetworkX Graph → Pickle to Disk
+    Chunks → LLM Extract Triples → NetworkX Graph → Redis (fallback: local JSON)
     """
 
     GRAPH_DIR = os.path.join(os.getcwd(), "graph_store")
@@ -44,6 +48,20 @@ class KnowledgeGraphBuilder:
     def __init__(self):
         self.llm = LLMClient()
         os.makedirs(self.GRAPH_DIR, exist_ok=True)
+
+    def _save_graph(self, collection_name: str, graph_data: dict) -> None:
+        """Save graph to Redis (primary) with local JSON fallback."""
+        serialized = json.dumps(graph_data, ensure_ascii=False)
+        r = get_redis()
+        if r:
+            r.setex(f"{_GRAPH_KEY_PREFIX}{collection_name}", _GRAPH_REDIS_TTL, serialized)
+            logger.info(f"   💾 Graph saved to Redis: {_GRAPH_KEY_PREFIX}{collection_name}")
+        else:
+            # Fallback: local file
+            graph_path = os.path.join(self.GRAPH_DIR, f"{collection_name}.json")
+            with open(graph_path, "w", encoding="utf-8") as f:
+                f.write(serialized)
+            logger.info(f"   💾 Graph saved to local file (Redis unavailable): {graph_path}")
 
     def _extract_triples(self, text: str, chunk_index: int) -> List[Dict]:
         """Dùng LLM trích xuất (Subject, Predicate, Object) từ 1 chunk."""
@@ -156,9 +174,11 @@ Quy tắc:
             
             # Thêm vào Graph
             for t in triples:
-                subj = t["subject"].strip()
-                obj = t["object"].strip()
-                pred = t["predicate"].strip()
+                subj = (t.get("subject") or "").strip()
+                obj = (t.get("object") or "").strip()
+                pred = (t.get("predicate") or "").strip()
+                if not subj or not obj or not pred:
+                    continue
                 
                 # Thêm Node với metadata
                 if not G.has_node(subj):
@@ -175,10 +195,7 @@ Quy tắc:
         logger.info(f"   ✅ Graph: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges")
         logger.info(f"   📊 Tổng triples: {len(all_triples)}")
         
-        # 4. Lưu Graph xuống disk dưới dạng JSON (thay pickle — tránh RCE risk)
-        graph_path = os.path.join(self.GRAPH_DIR, f"{collection_name}.json")
-
-        # Serialize NetworkX graph → node-link JSON
+        # 4. Serialize và lưu (Redis primary, local JSON fallback)
         for node in G.nodes:
             if isinstance(G.nodes[node].get("chunk_indices"), set):
                 G.nodes[node]["chunk_indices"] = list(G.nodes[node]["chunk_indices"])
@@ -187,21 +204,18 @@ Quy tắc:
             "graph": nx.node_link_data(G),
             "triples": all_triples,
         }
-        with open(graph_path, "w", encoding="utf-8") as f:
-            json.dump(graph_data, f, ensure_ascii=False)
+        self._save_graph(collection_name, graph_data)
 
         # Xóa file pickle cũ nếu còn tồn tại
         old_pickle = os.path.join(self.GRAPH_DIR, f"{collection_name}.gpickle")
         if os.path.exists(old_pickle):
             os.remove(old_pickle)
-
-        logger.info(f"   💾 Đã lưu Graph (JSON) tại: {graph_path}")
         return G
 
 
 class GraphRetriever:
     """Truy xuất thông tin từ Knowledge Graph.
-    
+
     Cách hoạt động:
     1. Nhận câu hỏi user → Trích Entity từ câu hỏi
     2. Tìm Node khớp trong Graph → Duyệt láng giềng (1-2 hop)
@@ -217,21 +231,30 @@ class GraphRetriever:
         self._graph_cache: Dict[str, nx.DiGraph] = {}
 
     def _load_graph(self, collection_name: str) -> Optional[nx.DiGraph]:
-        """Load Graph từ disk (có cache). Dùng JSON thay pickle để tránh RCE risk."""
+        """Load Graph: in-memory cache → Redis → local JSON fallback."""
         if collection_name in self._graph_cache:
             return self._graph_cache[collection_name]
 
-        graph_path = os.path.join(self.GRAPH_DIR, f"{collection_name}.json")
-        if not os.path.exists(graph_path):
-            logger.warning(f"⚠️ Chưa có Knowledge Graph cho [{collection_name}]. Hãy chạy build trước.")
-            return None
+        # 1. Try Redis
+        r = get_redis()
+        raw = r.get(f"{_GRAPH_KEY_PREFIX}{collection_name}") if r else None
 
-        with open(graph_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
+        # 2. Fallback: local JSON file
+        if raw is None:
+            graph_path = os.path.join(self.GRAPH_DIR, f"{collection_name}.json")
+            if not os.path.exists(graph_path):
+                logger.warning(f"⚠️ No Knowledge Graph for [{collection_name}]. Run /graph/build first.")
+                return None
+            with open(graph_path, "r", encoding="utf-8") as f:
+                raw = f.read()
+            logger.info(f"📂 Graph loaded from local file (Redis miss): {graph_path}")
+        else:
+            logger.info(f"📂 Graph loaded from Redis: {_GRAPH_KEY_PREFIX}{collection_name}")
 
+        data = json.loads(raw)
         G = nx.node_link_graph(data["graph"], directed=True)
         self._graph_cache[collection_name] = G
-        logger.info(f"📂 Loaded Graph [{collection_name}]: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges")
+        logger.info(f"✅ Graph [{collection_name}]: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges")
         return G
 
     def _extract_query_entities(self, query: str) -> List[str]:

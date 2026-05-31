@@ -61,6 +61,7 @@ class AIStore:
     generator = None
     summarizer = None
     graph_retriever = None
+    hybrid_retriever = None  # singleton — BM25 index cached across requests
     cache = None
 
 def _load_component(name: str, factory, attr: str) -> None:
@@ -86,6 +87,7 @@ async def startup_event():
     _load_component("AnswerGenerator", lambda: AnswerGenerator(), "generator")
     _load_component("VideoSummarizer", lambda: VideoSummarizer(), "summarizer")
     _load_component("GraphRetriever", lambda: GraphRetriever(), "graph_retriever")
+    _load_component("HybridRetriever", lambda: HybridRetriever(top_k=10), "hybrid_retriever")
     _load_component("SemanticCache", lambda: SemanticCache(), "cache")
 
     loaded = [k for k, v in vars(AIStore).items() if not k.startswith("_") and v is not None]
@@ -245,9 +247,18 @@ async def delete_collection(collection_name: str, _: str = Depends(require_api_k
         graph_path = os.path.join("graph_store", f"{collection_name}.gpickle")
         if os.path.exists(graph_path):
             os.remove(graph_path)
-        # Invalidate graph cache trong GraphRetriever
+        # Invalidate in-memory graph cache
         if AIStore.graph_retriever:
             AIStore.graph_retriever._graph_cache.pop(collection_name, None)
+        # Invalidate Redis graph
+        from src.core.redis_client import get_redis as _get_redis_client
+        _r = _get_redis_client()
+        if _r:
+            _r.delete(f"graph:{collection_name}")
+        # Invalidate BM25 cache trong HybridRetriever singleton
+        if AIStore.hybrid_retriever:
+            AIStore.hybrid_retriever.sparse._bm25_cache.pop(collection_name, None)
+            AIStore.hybrid_retriever.sparse._doc_mappings.pop(collection_name, None)
         logger.info(f"🗑️ Deleted collection: {collection_name}")
         return {"status": "deleted", "collection": collection_name}
     except Exception as e:
@@ -320,7 +331,7 @@ async def chat_rag(request: Request, req: ChatRequest, _: str = Depends(require_
             }
 
         # 1. Hybrid Search
-        hybrid = HybridRetriever(top_k=10)
+        hybrid = AIStore.hybrid_retriever or HybridRetriever(top_k=10)
         candidates = hybrid.search(req.query, collection_name=req.collection)
 
         if not candidates:
@@ -418,7 +429,7 @@ async def chat_rag_stream(request: Request, req: ChatRequest, _: str = Depends(r
             return StreamingResponse(cached_generator(), media_type="text/plain")
 
         # 1. Hybrid Search
-        hybrid = HybridRetriever(top_k=10)
+        hybrid = AIStore.hybrid_retriever or HybridRetriever(top_k=10)
         candidates = hybrid.search(req.query, collection_name=req.collection)
 
         if not candidates:
@@ -438,17 +449,22 @@ async def chat_rag_stream(request: Request, req: ChatRequest, _: str = Depends(r
         # 5. Streaming Generator
         def response_generator():
             full_response = ""
-            for chunk in AIStore.generator.generate_stream(
-                query=req.query,
-                retrieved_chunks=final_chunks,
-                global_summary=global_summary,
-                graph_facts=graph_data.get("facts", []),
-                graph_summary=graph_data.get("graph_summary", ""),
-                chat_history=chat_history_str
-            ):
-                full_response += chunk
-                yield chunk
-            
+            try:
+                for chunk in AIStore.generator.generate_stream(
+                    query=req.query,
+                    retrieved_chunks=final_chunks,
+                    global_summary=global_summary,
+                    graph_facts=graph_data.get("facts", []),
+                    graph_summary=graph_data.get("graph_summary", ""),
+                    chat_history=chat_history_str
+                ):
+                    full_response += chunk
+                    yield chunk
+            except Exception as e:
+                logger.error(f"[Stream] Generation error: {e}")
+                yield f"\n\n[Error: {str(e)}]"
+                return
+
             # Lưu lại tin nhắn AI sau khi stream xong
             history_mgr.add_message(role="assistant", content=full_response)
 
