@@ -17,15 +17,15 @@ def db_session_fixture():
 @pytest.fixture(autouse=True)
 def mock_deps(mocker):
     """Mock các phụ thuộc nặng hoặc bên ngoài."""
-    # 1. Mock Redis Client trực tiếp trong module history
+    # 1. Mock get_redis (Redis now accessed lazily via get_redis())
     mock_redis = MagicMock()
-    mocker.patch("src.engine.chat.history.redis_client", mock_redis)
-    
+    mocker.patch("src.engine.chat.history.get_redis", return_value=mock_redis)
+
     # 2. Mock Postgres Engine trực tiếp trong module history
     test_engine = create_engine("sqlite:///:memory:")
     SQLModel.metadata.create_all(test_engine)
     mocker.patch("src.engine.chat.history.engine", test_engine)
-    
+
     return mock_redis, test_engine
 
 def test_session_creation(mock_deps):

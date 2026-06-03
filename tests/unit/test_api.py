@@ -128,9 +128,10 @@ def test_chat_rag_stream_cache_hit(mock_aistore):
     })
     
     assert response.status_code == 200
-    # Trong stream mode, kết quả được ghép lại thành text
     assert "Cached answer" in response.text
-    assert "__CACHED__::true" in response.text
+    # New JSON meta frame format
+    assert "__META__" in response.text
+    assert '"cached": true' in response.text or '"cached":true' in response.text
 
 
 def test_get_summary(mock_aistore):

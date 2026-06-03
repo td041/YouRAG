@@ -17,12 +17,8 @@ def mock_llm_client(mocker):
 
 @pytest.fixture(autouse=True)
 def mock_semantic_cache(mocker):
-    """Mock SemanticCache to always return None (miss) by default in generator tests."""
-    mock_cls = mocker.patch("src.engine.generation.answer_generator.SemanticCache")
-    mock_instance = MagicMock()
-    mock_instance.check_cache.return_value = None
-    mock_cls.return_value = mock_instance
-    return mock_instance
+    """SemanticCache removed from AnswerGenerator — caching now handled at API layer."""
+    return MagicMock()
 
 
 from src.engine.generation.answer_generator import AnswerGenerator, _NO_CONTEXT_REPLY  # noqa: E402
@@ -189,26 +185,17 @@ def test_generate_returns_error_string_on_exception(mock_llm_client, mock_semant
 
 
 # ── Caching tests ─────────────────────────────────────────────────────────
+# Note: caching is now handled at the API layer (main.py), not inside AnswerGenerator.
 
-def test_generate_returns_cached_answer_on_hit(mock_llm_client, mock_semantic_cache):
-    """Kiểm tra generate trả về câu trả lời từ cache nếu có hit, và không gọi LLM."""
-    mock_semantic_cache.check_cache.return_value = {"answer": "Cached answer", "sources": [], "facts": []}
-
-    generator = AnswerGenerator()
-    result = generator.generate(query="hello", retrieved_chunks=[])
-
-    assert result == "Cached answer"
-    assert mock_llm_client.chat_complete.call_count == 0
-
-
-def test_generate_saves_to_cache_on_miss(mock_llm_client, mock_semantic_cache):
-    """Kiểm tra generate lưu kết quả vào cache sau khi gọi LLM."""
+def test_generate_calls_llm_when_chunks_present(mock_llm_client, mock_semantic_cache):
+    """Kiểm tra generate gọi LLM khi có chunks (cache handled by API layer now)."""
     mock_llm_client.chat_complete.return_value = "LLM answer"
 
     generator = AnswerGenerator()
-    generator.generate(query="hello", retrieved_chunks=[_make_chunk()])
+    result = generator.generate(query="hello", retrieved_chunks=[_make_chunk()])
 
-    mock_semantic_cache.save_to_cache.assert_called_once_with("hello", "LLM answer")
+    assert result == "LLM answer"
+    assert mock_llm_client.chat_complete.call_count == 1
 
 
 # ── Streaming tests ────────────────────────────────────────────────────────

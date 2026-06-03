@@ -1,4 +1,4 @@
-"""Unit tests for IngestionPipeline and ZenML steps."""
+"""Unit tests for IngestionPipeline direct runner functions."""
 
 import pytest
 from unittest.mock import MagicMock
@@ -26,64 +26,61 @@ def mock_loader(mocker):
 
 
 from src.engine.ingestion.pipeline import (  # noqa: E402
-    step_extract_video, 
-    step_semantic_chunking, 
-    step_graph_extraction, 
-    step_save_to_qdrantdb,
-    IngestionPipeline
+    _run_extract_video,
+    _run_semantic_chunking,
+    _run_graph_extraction,
+    _run_save_to_qdrant,
+    IngestionPipeline,
 )
 
 
-def test_step_extract_video(mock_loader):
-    """Kiểm tra step 1: extract video."""
-    result = step_extract_video("https://youtube.com/v123")
+def test_run_extract_video(mock_loader):
+    """Kiểm tra _run_extract_video gọi YouTubeLoader đúng."""
+    result = _run_extract_video("https://www.youtube.com/watch?v=v123")
     assert result["metadata"]["video_id"] == "v123"
     mock_loader.load_video_data.assert_called_once()
 
 
-def test_step_semantic_chunking(mocker):
-    """Kiểm tra step 2: semantic chunking."""
+def test_run_semantic_chunking(mocker):
+    """Kiểm tra _run_semantic_chunking gọi SemanticChunker và trả về chunks."""
     mock_chunker_cls = mocker.patch("src.engine.ingestion.pipeline.SemanticChunker")
     mock_chunker = MagicMock()
     mock_chunker.chunk_document.return_value = [{"content": "C1", "metadata": {}}]
     mock_chunker_cls.return_value = mock_chunker
-    
+
     raw_data = {"metadata": {}, "transcript": []}
-    result = step_semantic_chunking(raw_data, use_contextual=False)
-    
+    result = _run_semantic_chunking(raw_data, use_contextual=False)
+
     assert len(result) == 1
     assert result[0]["content"] == "C1"
 
 
-def test_step_graph_extraction(mocker):
-    """Kiểm tra step 3: graph extraction."""
+def test_run_graph_extraction(mocker):
+    """Kiểm tra _run_graph_extraction xử lý chunks song song."""
     mock_ext_cls = mocker.patch("src.engine.ingestion.pipeline.GraphExtractor")
     mock_ext = MagicMock()
     mock_ext.process_chunk.return_value = {"content": "C1_processed", "metadata": {}}
     mock_ext_cls.return_value = mock_ext
-    
+
     chunks = [{"content": "C1", "metadata": {}}]
-    result = step_graph_extraction(chunks)
-    
+    result = _run_graph_extraction(chunks)
+
     assert result[0]["content"] == "C1_processed"
 
 
-def test_step_save_to_qdrantdb(mock_db, mocker):
-    """Kiểm tra step 4: save to qdrant."""
-    # Mock KnowledgeGraphBuilder
+def test_run_save_to_qdrant_basic(mock_db, mocker):
+    """Kiểm tra _run_save_to_qdrant upsert lên Qdrant đúng."""
     mocker.patch("src.engine.ingestion.pipeline.KnowledgeGraphBuilder")
-    
-    # Setup mock_db responses
     mock_db.get_or_create_collection.return_value = "test-collection"
     mock_db.embedding_model.encode.return_value = [[0.1, 0.2]]
-    
+
     raw_data = {"metadata": {"video_id": "v123", "title": "Test Title"}}
     final_chunks = [{"content": "C1", "metadata": {"start_time": 0.0}}]
-    
-    result = step_save_to_qdrantdb(raw_data, final_chunks)
-    
+
+    result = _run_save_to_qdrant(raw_data, final_chunks)
+
     assert result["status"] == "success"
-    assert result["collection"] == "test-collection"
+    assert result["collection_name"] == "test-collection"
     mock_db.client.upsert.assert_called_once()
 
 
