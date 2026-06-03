@@ -77,6 +77,7 @@ export function streamChat(
       if (!r.ok) { onError(await r.text()); return; }
       const reader = r.body!.getReader();
       const dec = new TextDecoder();
+      const META_SENTINEL = "\n\n__META__";
       let buf = "";
       let textContent = "";
 
@@ -86,36 +87,30 @@ export function streamChat(
         const chunk = dec.decode(value, { stream: true });
         buf += chunk;
 
-        if (!buf.includes("__SOURCES__::") && !buf.includes("__SESSION__::")) {
+        const metaIdx = buf.indexOf(META_SENTINEL);
+        if (metaIdx === -1) {
+          // No meta frame yet — stream everything as text
           onChunk(chunk);
           textContent += chunk;
-        } else if (!textContent.includes("__SOURCES__::")) {
-          const splitTag = buf.includes("__SOURCES__::") ? "__SOURCES__::" : "__SESSION__::";
-          const textBeforeMeta = buf.split(splitTag)[0];
-          const remainingText = textBeforeMeta.slice(textContent.length);
-          if (remainingText) {
-             onChunk(remainingText);
-             textContent += remainingText;
-          }
+        } else if (textContent.length < metaIdx) {
+          // Meta frame arrived mid-chunk — flush remaining text before it
+          const remaining = buf.slice(textContent.length, metaIdx);
+          if (remaining) { onChunk(remaining); textContent += remaining; }
         }
       }
 
-      if (buf.includes("__SESSION__::")) {
-        const sessionPart = buf.split("__SESSION__::")[1].split("\n\n__")[0];
-        onSessionId(sessionPart.trim());
-      }
-
-      if (buf.includes("__SOURCES__::")) {
-        const metaPart = buf.split("__SOURCES__::")[1];
-        const srcStr = metaPart.split("\n\n__")[0];
-        const sources = srcStr.split(",").map((s) => s.trim()).filter(Boolean);
-        onSources(sources);
-      }
-      
-      if (buf.includes("__SUGGESTIONS__::")) {
-        const sugPart = buf.split("__SUGGESTIONS__::")[1].split("\n\n__")[0];
-        const suggestions = sugPart.split("|").map((s) => s.trim()).filter(Boolean);
-        onSuggestions(suggestions);
+      // Parse single JSON meta frame
+      const metaIdx = buf.indexOf(META_SENTINEL);
+      if (metaIdx !== -1) {
+        try {
+          const metaStr = buf.slice(metaIdx + META_SENTINEL.length);
+          const meta = JSON.parse(metaStr);
+          onSources(meta.sources ?? []);
+          onSuggestions(meta.suggestions ?? []);
+          onSessionId(meta.session_id ?? "");
+        } catch (e) {
+          console.warn("Failed to parse stream meta frame", e);
+        }
       }
 
       onDone();

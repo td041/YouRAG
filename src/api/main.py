@@ -193,6 +193,13 @@ def _job_update(job_id: str, patch: dict) -> None:
     _job_set(job_id, data)
 
 
+def _invalidate_bm25_cache(collection_name: str) -> None:
+    """Invalidate BM25 in-memory cache for a collection (called on ingest and delete)."""
+    if AIStore.hybrid_retriever:
+        AIStore.hybrid_retriever.sparse._bm25_cache.pop(collection_name, None)
+        AIStore.hybrid_retriever.sparse._doc_mappings.pop(collection_name, None)
+
+
 def _run_ingest_job(job_id: str, url: str, use_contextual: bool, use_late_chunking: bool) -> None:
     """Background task: chạy ingest và cập nhật trạng thái job."""
     _job_update(job_id, {"status": "running"})
@@ -202,6 +209,9 @@ def _run_ingest_job(job_id: str, url: str, use_contextual: bool, use_late_chunki
             use_late_chunking=use_late_chunking,
         )
         result = pipeline.run(url)
+        # Invalidate BM25 cache so next query uses fresh chunks
+        if result.get("collection_name"):
+            _invalidate_bm25_cache(result["collection_name"])
         _job_update(job_id, {"status": "done", "result": result})
     except Exception as e:
         logger.error(f"[IngestJob {job_id}] failed: {e}")
@@ -256,9 +266,7 @@ async def delete_collection(collection_name: str, _: str = Depends(require_api_k
         if _r:
             _r.delete(f"graph:{collection_name}")
         # Invalidate BM25 cache trong HybridRetriever singleton
-        if AIStore.hybrid_retriever:
-            AIStore.hybrid_retriever.sparse._bm25_cache.pop(collection_name, None)
-            AIStore.hybrid_retriever.sparse._doc_mappings.pop(collection_name, None)
+        _invalidate_bm25_cache(collection_name)
         logger.info(f"🗑️ Deleted collection: {collection_name}")
         return {"status": "deleted", "collection": collection_name}
     except Exception as e:
@@ -419,12 +427,14 @@ async def chat_rag_stream(request: Request, req: ChatRequest, _: str = Depends(r
                 answer = cached_data["answer"]
                 yield answer
                 history_mgr.add_message(role="assistant", content=answer)
-                
-                yield f"\n\n__SOURCES__::{','.join(cached_data['sources'])}"
-                if cached_data.get("facts"):
-                    yield f"\n\n__FACTS__::{'|'.join(cached_data['facts'])}"
-                yield f"\n\n__SESSION__::{session_id}"
-                yield "\n\n__CACHED__::true"
+                meta = json.dumps({
+                    "sources": cached_data.get("sources", []),
+                    "facts": cached_data.get("facts", []),
+                    "session_id": session_id,
+                    "suggestions": [],
+                    "cached": True,
+                })
+                yield f"\n\n__META__{meta}"
 
             return StreamingResponse(cached_generator(), media_type="text/plain")
 
@@ -473,13 +483,7 @@ async def chat_rag_stream(request: Request, req: ChatRequest, _: str = Depends(r
                 f"{format_timestamp(c['metadata']['start_time'])}–{format_timestamp(c['metadata']['end_time'])}"
                 for c in final_chunks
             ]
-            yield f"\n\n__SOURCES__::{','.join(sources)}"
 
-            if graph_data.get("facts"):
-                yield f"\n\n__FACTS__::{'|'.join(graph_data['facts'])}"
-            
-            yield f"\n\n__SESSION__::{session_id}"
-            
             # --- SAVE TO CACHE ---
             AIStore.cache.save_to_cache(
                 query=req.query,
@@ -490,14 +494,23 @@ async def chat_rag_stream(request: Request, req: ChatRequest, _: str = Depends(r
             )
 
             # Generate Suggested Questions
+            suggestions = []
             sq_prompt = f"Dựa trên câu hỏi '{req.query}' và câu trả lời '{full_response}', hãy gợi ý đúng 3 câu hỏi ngắn gọn (mỗi câu dưới 12 từ) mà người dùng có thể hỏi tiếp theo. Trả về định dạng: Câu 1|Câu 2|Câu 3. Không gạch đầu dòng, không đánh số."
             try:
                 sq_list = AIStore.generator.llm.chat_complete(sq_prompt, system="Bạn là trợ lý RAG.", max_tokens=100)
-                # Clean up format issues from LLM just in case
-                sq_clean = sq_list.replace('\n', '').strip()
-                yield f"\n\n__SUGGESTIONS__::{sq_clean}"
+                suggestions = [s.strip() for s in sq_list.replace('\n', '').split("|") if s.strip()]
             except Exception as e:
                 logger.error(f"Error generating suggestions: {e}")
+
+            # Single JSON meta frame — safe against LLM output containing delimiter strings
+            meta = json.dumps({
+                "sources": sources,
+                "facts": graph_data.get("facts", []),
+                "session_id": session_id,
+                "suggestions": suggestions[:3],
+                "cached": False,
+            })
+            yield f"\n\n__META__{meta}"
 
         return StreamingResponse(response_generator(), media_type="text/plain")
     except Exception as e:

@@ -2,7 +2,6 @@ import re
 from typing import List, Dict, Any, Optional
 from src.engine.generation.llm_client import LLMClient
 from src.engine.generation.prompt_builder import PromptBuilder
-from src.cache.semantic_cache import SemanticCache
 from src.core.logger import logger
 from src.core.utils import format_timestamp
 
@@ -16,7 +15,6 @@ class AnswerGenerator:
 
     def __init__(self):
         self.llm = LLMClient()
-        self.cache = SemanticCache()
 
     def _build_context_string(self, chunks: List[Dict[str, Any]]) -> str:
         """Đóng gói các đoạn tài liệu thành một định dạng văn bản dễ đọc cho LLM."""
@@ -130,11 +128,6 @@ class AnswerGenerator:
         """Thực thi sinh câu trả lời RAG với bối cảnh thực thể từ Knowledge Graph."""
         logger.info(f"✨ Production Generation (Graph Enhanced): '{query}'")
 
-        cached = self.cache.check_cache(query)
-        if cached is not None:
-            logger.info(f"[AnswerGenerator] Cache hit for query: '{query[:60]}'")
-            return cached["answer"]
-
         if not retrieved_chunks:
             logger.warning("[AnswerGenerator] No chunks retrieved — returning no-context reply")
             return _NO_CONTEXT_REPLY
@@ -166,8 +159,6 @@ class AnswerGenerator:
 
             # Citation Grounding — xóa timestamp bịa
             final_answer = self._validate_citations(final_answer, retrieved_chunks)
-
-            self.cache.save_to_cache(query, final_answer)
             return final_answer
 
         except Exception as e:

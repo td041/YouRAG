@@ -52,13 +52,15 @@ class VideoSummarizer:
             # Sort theo thứ tự gốc từ đầu đến cuối video
             chunks.sort(key=lambda x: x["index"])
             
+            if not chunks:
+                logger.error("❌ Collection không có chunks hợp lệ.")
+                return None
+
             MAX_CHUNKS = settings.SUMMARIZER_MAX_CHUNKS
             if len(chunks) > MAX_CHUNKS:
-                logger.warning(f"Video quá dài ({len(chunks)} chunks). Đang áp dụng Trích mẫu Tỉ Lệ Đều (Uniform Sampling)...")
+                logger.warning(f"Video quá dài ({len(chunks)} chunks). Đang áp dụng Trích mẫu Tỉ Lệ Đều...")
                 step = len(chunks) / MAX_CHUNKS
-                # Trích 12 chunks cách đều nhau từ đầu đến cuối video
-                sampled_chunks = [chunks[int(i * step)] for i in range(MAX_CHUNKS)]
-                chunks = sampled_chunks
+                chunks = [chunks[int(i * step)] for i in range(MAX_CHUNKS)]
             
             # Ghép lại thành 1 văn bản dài kèm mốc thời gian
             full_transcript = []

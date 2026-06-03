@@ -69,6 +69,7 @@ class ContextualEnricher:
         self.max_workers = max_workers
         self.cache_dir = cache_dir
         os.makedirs(cache_dir, exist_ok=True)
+        self._prune_disk_cache(max_age_days=30)
 
         # Khởi tạo LLM client (lazy — chỉ khi cần)
         self._llm: Optional[LLMClient] = llm_client
@@ -82,6 +83,21 @@ class ContextualEnricher:
             logger.warning(f"⚠️  ContextualEnricher: LLM không khả dụng → sẽ bỏ qua enrichment. Lý do: {e}")
 
     # ── Cache helpers ─────────────────────────────────────────────────────────
+
+    def _prune_disk_cache(self, max_age_days: int = 30) -> None:
+        """Delete local cache files older than max_age_days."""
+        try:
+            cutoff = time.time() - max_age_days * 86400
+            removed = 0
+            for fname in os.listdir(self.cache_dir):
+                fpath = os.path.join(self.cache_dir, fname)
+                if os.path.isfile(fpath) and os.path.getmtime(fpath) < cutoff:
+                    os.remove(fpath)
+                    removed += 1
+            if removed:
+                logger.info(f"[ContextualCache] Pruned {removed} stale files (>{max_age_days}d old)")
+        except Exception as e:
+            logger.warning(f"[ContextualCache] Prune failed: {e}")
 
     def _cache_key(self, video_id: str, chunk_index: int, chunk_text: str) -> str:
         """Hash duy nhất cho mỗi (video, chunk) → dùng làm tên file cache."""

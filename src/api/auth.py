@@ -14,10 +14,20 @@ def require_api_key(key: str = Security(_api_key_header)) -> str:
     Nếu đã cấu hình → yêu cầu header X-API-Key khớp.
     """
     configured = settings.API_KEY
-    # Dev mode: API_KEY chưa set hoặc set thành chuỗi rỗng → bỏ qua kiểm tra
-    if configured is None or configured.get_secret_value().strip() == "":
+    # Dev mode: API_KEY not set at all → skip auth
+    if configured is None:
         return ""
-    if key != configured.get_secret_value():
+    secret = configured.get_secret_value()
+    # Empty string from Docker env (API_KEY=) → dev mode, not misconfigured
+    if secret == "":
+        return ""
+    # Whitespace-only key is a misconfiguration — reject all requests
+    if not secret.strip():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Server misconfigured: API_KEY contains only whitespace.",
+        )
+    if key != secret:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or missing API key. Provide X-API-Key header.",

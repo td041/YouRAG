@@ -173,14 +173,15 @@ class YouTubeLoader:
 
         logger.info(f"⚡ Parallel fetch metadata + transcript cho: {video_id}")
 
-        # Chạy song song 2 tác vụ I/O-bound, timeout 60s mỗi task
+        # Chạy song song 2 tác vụ I/O-bound
         metadata, raw_transcript = None, None
         with ThreadPoolExecutor(max_workers=2) as executor:
             future_meta = executor.submit(self.fetch_metadata, url)
             future_transcript = executor.submit(self.fetch_transcript, video_id)
 
-            metadata = future_meta.result(timeout=60)
-            raw_transcript = future_transcript.result(timeout=60)
+            _timeout = getattr(settings, "YOUTUBE_FETCH_TIMEOUT", 120)
+            metadata = future_meta.result(timeout=_timeout)
+            raw_transcript = future_transcript.result(timeout=_timeout)
 
         # Whisper fallback khi YouTube không có phụ đề
         if not raw_transcript:

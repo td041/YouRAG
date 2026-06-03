@@ -51,6 +51,7 @@ class Settings(BaseSettings):
     CHUNK_OVERLAP: int = 150
     SUMMARIZER_MAX_CHUNKS: int = 12   # Số chunks tối đa để summarize (Groq TPM limit)
     GRAPH_MAX_CHUNKS: int = 15        # Số chunks tối đa để build knowledge graph
+    YOUTUBE_FETCH_TIMEOUT: int = 120  # Timeout (seconds) cho YouTube metadata + transcript fetch
 
     # 7. Cấu hình Kết nối (Connection Hub)
     # Tự động lấy từ Docker Compose hoặc file .env

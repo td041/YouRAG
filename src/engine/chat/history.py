@@ -1,20 +1,21 @@
 import json
-import redis
 from typing import List, Dict
 from sqlmodel import Session, select
 from datetime import datetime, timezone
 
-from src.core.config import settings
 from src.core.postgres import engine
+from src.core.redis_client import get_redis
 from src.models.chat import ChatSession, ChatMessage
 from src.core.logger import setup_logger
 
 logger = setup_logger("ChatHistory")
 
-# Cấu hình Redis từ centralized settings
-REDIS_URL = settings.REDIS_URL
-redis_client = redis.Redis.from_url(REDIS_URL, decode_responses=True)
 CACHE_TTL = 3600 * 24  # 1 ngày lưu trên Redis
+
+
+def _redis():
+    """Lazy Redis access — never fails at import time."""
+    return get_redis()
 
 class ChatHistoryManager:
     """Quản lý lịch sử chat: Tốc độ cao với Redis, Bền vững với PostgreSQL"""
@@ -54,50 +55,56 @@ class ChatHistoryManager:
         except Exception as e:
             logger.error(f"❌ Lỗi khi lưu tin nhắn vào Postgres: {e}")
 
-        # 2. Lưu vào Redis (với try-except để không crash nếu Redis die)
+        # 2. Lưu vào Redis (lazy — không crash nếu Redis down)
         try:
-            msg_data = {"role": role, "content": content}
-            redis_client.rpush(self.redis_key, json.dumps(msg_data))
-            redis_client.expire(self.redis_key, CACHE_TTL)
-        except redis.exceptions.RedisError as e:
-            logger.warning(f"⚠️ Redis đang gặp sự cố, bỏ qua lưu cache: {e}")
+            r = _redis()
+            if r:
+                msg_data = {"role": role, "content": content}
+                r.rpush(self.redis_key, json.dumps(msg_data))
+                r.expire(self.redis_key, CACHE_TTL)
+        except Exception as e:
+            logger.warning(f"⚠️ Redis write failed, skipping cache: {e}")
 
     def get_history(self, limit: int = 10) -> List[Dict[str, str]]:
         """Lấy lịch sử chat. Ưu tiên Redis, nếu không có thì lấy từ PostgreSQL."""
-        
+
         # 1. Thử lấy từ Redis
         try:
-            if redis_client.exists(self.redis_key):
-                # Lấy K tin nhắn cuối cùng
-                raw_msgs = redis_client.lrange(self.redis_key, -limit, -1)
+            r = _redis()
+            if r and r.exists(self.redis_key):
+                raw_msgs = r.lrange(self.redis_key, -limit, -1)
                 if raw_msgs:
                     logger.info(f"[{self.session_id}] Lấy lịch sử từ REDIS")
                     return [json.loads(m) for m in raw_msgs]
-        except redis.exceptions.RedisError as e:
-            logger.warning(f"⚠️ Lỗi kết nối Redis ({e}), đang fallback xuống Postgres...")
-        
-        # 2. Fallback: Lấy từ PostgreSQL nếu Redis mất (cache miss hoặc error)
+        except Exception as e:
+            logger.warning(f"⚠️ Redis read failed, falling back to Postgres: {e}")
+
+        # 2. Fallback: PostgreSQL
         logger.info(f"[{self.session_id}] Lấy lịch sử từ POSTGRES")
         try:
             with Session(engine) as db:
-                statement = select(ChatMessage).where(ChatMessage.session_id == self.session_id).order_by(ChatMessage.created_at.desc()).limit(limit)
+                statement = (
+                    select(ChatMessage)
+                    .where(ChatMessage.session_id == self.session_id)
+                    .order_by(ChatMessage.created_at.desc())
+                    .limit(limit)
+                )
                 db_msgs = db.exec(statement).all()
-                
-                # Đảo ngược lại để đúng thứ tự thời gian (cũ -> mới)
                 db_msgs.reverse()
-                
                 history = [{"role": msg.role, "content": msg.content} for msg in db_msgs]
-                
-                # Thử phục hồi vào Redis nếu có thể
+
+                # Backfill Redis cache
                 if history:
                     try:
-                        pipe = redis_client.pipeline()
-                        for msg in history:
-                            pipe.rpush(self.redis_key, json.dumps(msg))
-                        pipe.expire(self.redis_key, CACHE_TTL)
-                        pipe.execute()
-                    except redis.exceptions.RedisError:
-                        pass # Bỏ qua nếu phục hồi cache thất bại
+                        r = _redis()
+                        if r:
+                            pipe = r.pipeline()
+                            for msg in history:
+                                pipe.rpush(self.redis_key, json.dumps(msg))
+                            pipe.expire(self.redis_key, CACHE_TTL)
+                            pipe.execute()
+                    except Exception:
+                        pass
 
                 return history
         except Exception as e:
