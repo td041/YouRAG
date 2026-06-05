@@ -48,12 +48,22 @@ def run_evaluate(collection_name: str):
     comparison = evaluator.compare_baseline_vs_advanced(collection_name)
     
     logger.info("\n🏆 KẾT LUẬN:")
-    improvements = comparison.get("improvements", {})
-    for metric, data in improvements.items():
-        if isinstance(data, dict) and data.get("delta", 0) > 0:
-            logger.info(f"   ✅ {metric}: Tăng +{data['improvement_pct']}%")
-        elif isinstance(data, dict):
-            logger.info(f"   ⚠️ {metric}: {data.get('delta', 'N/A')}")
+    naive_s  = comparison.get("0_naive",    {}).get("ragas_scores", {})
+    hybrid_s = comparison.get("1_hybrid",   {}).get("ragas_scores", {})
+    adv_s    = comparison.get("2_advanced", {}).get("ragas_scores", {})
+
+    core_metrics = ["faithfulness", "answer_relevancy", "context_precision", "context_recall", "factual_correctness"]
+    for metric in core_metrics:
+        n = naive_s.get(metric)
+        h = hybrid_s.get(metric)
+        a = adv_s.get(metric)
+        if n is None:
+            continue
+        scores = {k: v for k, v in [("Naive", n), ("Hybrid", h), ("Advanced", a)] if v is not None}
+        best_tier = max(scores, key=scores.get)
+        best_val  = scores[best_tier]
+        icon = "✅" if best_val > n else "⚪"
+        logger.info(f"   {icon} {metric}: tốt nhất là {best_tier} ({best_val:.4f}) | Naive={n:.4f} Hybrid={h:.4f if h else 'N/A'} Advanced={a:.4f if a else 'N/A'}")
 
 
 def main():

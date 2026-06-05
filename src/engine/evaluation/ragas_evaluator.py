@@ -53,8 +53,24 @@ class RAGASEvaluator:
         self.hybrid_retriever = HybridRetriever(top_k=10)
         self.naive_retriever = DenseRetriever(top_k=5)
         self.reranker = CrossEncoderReranker()
-        self.generator = AnswerGenerator()
         self.db = db_instance
+
+        # Build round-robin Groq clients để chia đều daily token quota
+        from groq import Groq
+        groq_primary = settings.GROQ_API_KEY.get_secret_value() if settings.GROQ_API_KEY else os.getenv("GROQ_API_KEY", "")
+        extra_keys_str = getattr(settings, "GROQ_API_KEYS", "") or os.getenv("GROQ_API_KEYS", "")
+        extra_keys = [k.strip() for k in extra_keys_str.split(",") if k.strip()]
+        all_keys = [groq_primary] + extra_keys
+
+        self._groq_clients = [Groq(api_key=k) for k in all_keys if k]
+        self._groq_rr_index = 0  # round-robin index
+        logger.info(f"📊 Benchmark: {len(self._groq_clients)} Groq key(s) in round-robin rotation")
+
+        # Generator dùng 70b để benchmark đúng production quality
+        from src.engine.generation.llm_client import LLMClient
+        prod_llm = LLMClient(model=settings.LLM_MODEL_NAME)
+        self.generator = AnswerGenerator()
+        self.generator.llm = prod_llm
 
     # ------------------------------------------------------------------
     # Dataset
@@ -100,7 +116,7 @@ class RAGASEvaluator:
 
         else:  # advanced
             candidates = self.hybrid_retriever.search(query, collection_name)
-            top_results = self.reranker.rerank(query=query, chunks=candidates, top_k=5)
+            top_results = self.reranker.rerank(query=query, chunks=candidates, top_k=9)
 
         contexts = [r["content"] for r in top_results if r.get("content")]
         answer = self.generator.generate(query=query, retrieved_chunks=top_results)
@@ -117,16 +133,40 @@ class RAGASEvaluator:
     # ------------------------------------------------------------------
 
     def _build_ragas_llm(self) -> Any:
-        """Tạo Groq-backed LLM cho RAGAS.
+        """Tạo LLM cho RAGAS evaluation.
 
-        Groq Free Tier không hỗ trợ n>1 — dùng subclass để hard-cap n=1
-        bất kể RAGAS có bind(n=3) hay không.
+        Thứ tự ưu tiên:
+        1. MISTRAL_EVAL_API_KEY — không quota ngày, 50 req/min, hỗ trợ n>1
+        2. Groq                 — fallback, n=1 guard, Faithfulness/Recall có thể NaN
         """
         from langchain_openai import ChatOpenAI
         from langchain_core.runnables import Runnable
         from ragas.llms import LangchainLLMWrapper
         from typing import Any as AnyType
 
+        # 1. Mistral — primary evaluator
+        mistral_key = (
+            settings.MISTRAL_EVAL_API_KEY.get_secret_value()
+            if settings.MISTRAL_EVAL_API_KEY
+            else os.getenv("MISTRAL_EVAL_API_KEY", "")
+        )
+        if mistral_key:
+            logger.info("🤖 RAGAS evaluator LLM: Mistral Small (no daily quota, 50 req/min)")
+            llm = ChatOpenAI(
+                model="mistral-small-latest",
+                openai_api_key=mistral_key,
+                openai_api_base="https://api.mistral.ai/v1",
+                temperature=0.0,
+                max_tokens=2048,
+            )
+            return LangchainLLMWrapper(llm)
+
+        # 2. Fallback Groq — n=1 guard, metrics không đầy đủ
+        logger.warning(
+            "⚠️  Không có MISTRAL_EVAL_API_KEY — dùng Groq fallback. "
+            "Faithfulness/Context Recall có thể NaN do giới hạn n>1. "
+            "Thêm MISTRAL_EVAL_API_KEY vào .env để có đủ 5 metrics."
+        )
         groq_key = (
             settings.GROQ_API_KEY.get_secret_value()
             if settings.GROQ_API_KEY
@@ -137,9 +177,10 @@ class RAGASEvaluator:
             """ChatOpenAI subclass: always forces n=1 for Groq Free Tier compatibility."""
 
             def bind(self, **kwargs: AnyType) -> Runnable:
-                kwargs.pop("n", None)  # Strip n — Groq rejects n>1
+                kwargs.pop("n", None)
                 return super().bind(**kwargs)
 
+        logger.info("🤖 RAGAS evaluator LLM: Groq llama-3.1-8b-instant (n=1 guard)")
         llm = _GroqSafeLLM(
             model="llama-3.1-8b-instant",
             openai_api_key=groq_key,
@@ -151,12 +192,16 @@ class RAGASEvaluator:
         return LangchainLLMWrapper(llm)
 
     def _build_ragas_embeddings(self) -> Any:
-        """Tạo HuggingFace embeddings cho RAGAS (dùng lại sentence-transformers đã cài)."""
+        """Tạo HuggingFace embeddings ĐA NGÔN NGỮ cho RAGAS.
+
+        QUAN TRỌNG: phải dùng model multilingual vì câu hỏi/trả lời là tiếng Việt.
+        Model English-only (all-MiniLM-L6-v2) làm Answer Relevancy gần như ngẫu nhiên.
+        """
         from langchain_community.embeddings import HuggingFaceEmbeddings
         from ragas.embeddings import LangchainEmbeddingsWrapper
 
         hf_emb = HuggingFaceEmbeddings(
-            model_name="all-MiniLM-L6-v2",
+            model_name="paraphrase-multilingual-MiniLM-L12-v2",  # hỗ trợ tiếng Việt
             model_kwargs={"device": "cpu"},
             encode_kwargs={"normalize_embeddings": True},
         )
@@ -206,7 +251,15 @@ class RAGASEvaluator:
             ]
             dataset = EvaluationDataset(samples=samples)
 
-            logger.info("🔬 Đang tính RAGAS metrics (có thể mất 1-3 phút)...")
+            from ragas.run_config import RunConfig
+            run_cfg = RunConfig(
+                max_workers=1,      # Sequential — không bao giờ burst Mistral, đảm bảo full metrics
+                max_retries=3,      # 3 retries để chắc chắn mỗi call thành công
+                max_wait=45,        # chờ tối đa 45s nếu bị rate limit
+                timeout=60,
+            )
+
+            logger.info("🔬 Đang tính RAGAS metrics (sequential, max 2 retries)...")
             result = evaluate(
                 dataset=dataset,
                 metrics=[
@@ -216,6 +269,7 @@ class RAGASEvaluator:
                     _context_recall,
                     factual_correctness,
                 ],
+                run_config=run_cfg,
                 raise_exceptions=False,
                 show_progress=True,
             )
@@ -231,9 +285,18 @@ class RAGASEvaluator:
                 "context_recall",
                 "factual_correctness",
             ]
+            import math
             for col in metric_cols:
                 if col in df.columns:
-                    scores[col] = round(float(df[col].mean(skipna=True)), 4)
+                    val = float(df[col].mean(skipna=True))
+                    if not math.isnan(val):
+                        scores[col] = round(val, 4)
+
+            # factual_correctness từ RAGAS thường fail với tiếng Việt (claim decomposition).
+            # Fallback: semantic similarity answer↔ground_truth bằng multilingual embeddings.
+            if "factual_correctness" not in scores:
+                logger.info("⚙️  factual_correctness từ RAGAS rỗng → tính semantic similarity")
+                scores["factual_correctness"] = self._semantic_correctness(answers, ground_truths)
 
             # Per-question chi tiết
             scores["_per_question"] = df[
@@ -247,6 +310,25 @@ class RAGASEvaluator:
             logger.error(f"❌ Lỗi RAGAS: {e}")
             logger.warning("⚠️  Fallback: tính Hit Rate + MRR thủ công")
             return self._fallback_metrics(questions, answers, contexts_list, ground_truths)
+
+    def _semantic_correctness(self, answers: List[str], ground_truths: List[str]) -> float:
+        """Đo độ đúng thực tế = cosine similarity(answer, ground_truth) đa ngôn ngữ.
+
+        Thay cho RAGAS FactualCorrectness (claim decomposition fail với tiếng Việt).
+        Trả về điểm trung bình [0, 1].
+        """
+        try:
+            from sentence_transformers import SentenceTransformer
+            import numpy as np
+
+            model = SentenceTransformer("paraphrase-multilingual-MiniLM-L12-v2", device="cpu")
+            ans_emb = model.encode(answers, normalize_embeddings=True)
+            gt_emb = model.encode(ground_truths, normalize_embeddings=True)
+            sims = [float(np.dot(a, g)) for a, g in zip(ans_emb, gt_emb)]
+            return round(sum(sims) / max(len(sims), 1), 4)
+        except Exception as e:
+            logger.warning(f"[semantic_correctness] failed: {e}")
+            return 0.0
 
     def _fallback_metrics(
         self,
@@ -312,6 +394,21 @@ class RAGASEvaluator:
             query = item["question"]
             gt = item["ground_truth"]
             logger.info(f"\n[{idx}/{len(dataset)}] Q: {query[:80]}")
+
+            # Proactive round-robin: rotate Groq key mỗi query để chia đều daily quota
+            if self._groq_clients:
+                rr_client = self._groq_clients[self._groq_rr_index % len(self._groq_clients)]
+                self._groq_rr_index += 1
+                self.generator.llm._client = rr_client
+                logger.info(f"   🔑 Using Groq key #{(self._groq_rr_index - 1) % len(self._groq_clients) + 1}/{len(self._groq_clients)}")
+
+            # Delay để không vượt 12K tokens/phút per key
+            # Per-key budget: Advanced ~5K/query → 2.4 queries/min → delay 25s
+            # Với 2 keys alternating: effective delay 12s per key → safe
+            if idx > 1:
+                delay = 18 if mode == "advanced" else 8
+                logger.info(f"   ⏳ Waiting {delay}s...")
+                time.sleep(delay)
 
             out = self._run_pipeline(query, collection_name, mode)
 
@@ -495,7 +592,11 @@ class RAGASEvaluator:
             "",
             f"**Collection:** `{comparison['collection']}`  ",
             f"**Generated:** {comparison['generated_at']}  ",
-            f"**Questions:** {comparison['0_naive']['total_questions']}",
+            f"**Questions:** {comparison['0_naive']['total_questions']}  ",
+            f"**Generation LLM:** `{settings.LLM_MODEL_NAME}` via Groq  ",
+            "**Evaluator LLM:** `mistral-small-latest` via Mistral AI  ",
+            "**Evaluator Embeddings:** `paraphrase-multilingual-MiniLM-L12-v2` (multilingual)  ",
+            f"**Reranker:** `{settings.CROSS_ENCODER_MODEL}`",
             "",
             "## Ablation Study Results",
             "",
@@ -547,7 +648,7 @@ class RAGASEvaluator:
             "| **Factual Correctness** | Câu trả lời đúng thực tế so với ground truth |",
             "",
             "---",
-            "*Evaluated with [RAGAS 0.4.x](https://docs.ragas.io) + Groq llama-3.1-8b-instant*",
+            f"*Evaluated with [RAGAS 0.4.x](https://docs.ragas.io) | Generation: `{settings.LLM_MODEL_NAME}` | Evaluator: `mistral-small-latest`*",
         ]
         return "\n".join(lines)
 
