@@ -167,9 +167,32 @@ poetry run ruff check src/ tests/
 # Security
 poetry run bandit -r src/ -ll
 
-# RAGAS benchmark (requires GEMINI_EVAL_API_KEY)
-poetry run python tests/run_benchmark.py --evaluate
+# RAGAS benchmark
+make benchmark
+# or with specific collection:
+make benchmark COLLECTION=your-collection-name
 ```
+
+---
+
+## Benchmark Results
+
+Evaluated on **20 questions** (mixed difficulty: factual, reasoning, comparative, synthesis) using:
+- **Generation:** `llama-3.3-70b-versatile` via Groq
+- **Evaluator:** `mistral-small-latest` via Mistral AI
+- **Reranker:** `BAAI/bge-reranker-v2-m3`
+- **Embeddings (eval):** `paraphrase-multilingual-MiniLM-L12-v2` (multilingual)
+
+| Metric | Naive (Dense) | Hybrid (RRF) | Advanced (Rerank) |
+|---|---|---|---|
+| **Faithfulness** | 0.851 | **0.929** ✅ | 0.843 |
+| **Answer Relevancy** | 0.767 | **0.832** ✅ | 0.782 |
+| **Context Precision** | **0.936** ✅ | 0.935 | 0.902 |
+| **Context Recall** | **1.000** ✅ | 0.988 | 0.963 |
+| **Factual Correctness** | 0.733 | **0.777** ✅ | 0.737 |
+| **Latency (s)** | 1.79 | 1.65 | 4.74 |
+
+> Hybrid retrieval (Dense + BM25 + RRF) achieves the best balance across all metrics. Context Recall = 1.0 on Naive indicates no information is missed at the retrieval stage.
 
 ---
 
@@ -179,10 +202,10 @@ See [.env.example](.env.example) for full reference.
 
 | Variable | Required | Description |
 |---|---|---|
-| `GROQ_API_KEY` | ✅ | Primary LLM |
+| `GROQ_API_KEY` | ✅ | Primary LLM (llama-3.3-70b) |
+| `GROQ_API_KEYS` | Optional | Backup Groq keys (comma-separated) for benchmark rotation |
 | `API_KEY` | Recommended | Protects write endpoints |
-| `GEMINI_API_KEY` | Optional | Production fallback when Groq rate-limits |
-| `GEMINI_EVAL_API_KEY` | Optional | Separate key for RAGAS benchmark |
+| `MISTRAL_EVAL_API_KEY` | Recommended | RAGAS benchmark evaluator (no daily quota) |
 | `JINA_API_KEY` | Optional | Late Chunking embeddings |
 | `QDRANT_SERVER_URL` | Production | Qdrant Cloud URL |
 
