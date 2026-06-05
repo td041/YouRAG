@@ -70,7 +70,7 @@ flowchart TD
 - **YouTube URL validation** — Backend validates URL before queuing job (HTTP 422 on invalid)
 - **Redis job store** — Ingest jobs persist in Redis with 24h TTL; auto-fallback to in-memory in dev
 - **`/health` endpoint** — Checks Qdrant, Redis, Generator, Reranker; returns `200` or `503`
-- **Gemini auto-fallback** — Transparent switch to Gemini when Groq hits rate limit (429)
+- **Groq key rotation** — Auto-rotate backup keys when primary hits rate limit (`GROQ_API_KEYS`)
 - **Whisper STT fallback** — Auto-transcribes videos without captions via faster-whisper
 
 ### Frontend (Next.js 14)
@@ -92,7 +92,7 @@ flowchart TD
 | Embeddings | BAAI/bge-m3 (1024-dim, multilingual) |
 | Reranker | cross-encoder/mmarco-mMiniLMv2-L12-H384-v1 |
 | LLM primary | Groq llama-3.3-70b-versatile |
-| LLM fallback | Gemini 2.0 Flash (auto on Groq 429) |
+| LLM fallback | Groq backup key rotation (`GROQ_API_KEYS`) |
 | Chat history | PostgreSQL 15 + Redis 7 (dual-layer) |
 | BM25 | rank-bm25 |
 | Knowledge Graph | NetworkX (JSON serialization, no pickle) |
@@ -225,7 +225,7 @@ See [.env.example](.env.example) for full reference.
 - [x] Dark/Light mode + Mobile responsive UI
 - [x] API Key auth + Rate limiting
 - [x] Redis job store + /health endpoint
-- [x] Gemini auto-fallback
+- [x] Groq backup key rotation
 - [x] Docker Compose (5 services) + uv fast builds
 - [x] CI/CD (Ruff + Bandit + Pytest, 83% coverage)
 - [ ] Multi-video cross-referencing
