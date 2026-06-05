@@ -62,6 +62,8 @@ class LLMClient:
         # Lưu Gemini key để dùng cho auto-fallback
         self._gemini_key = gemini_key
         self._fallback_client: Optional[object] = None
+        self._groq_backup_clients: list = []
+        self._groq_key_index: int = 0
 
         # 2. Khởi tạo Client tương ứng
         if self.provider == "groq":
@@ -70,12 +72,14 @@ class LLMClient:
             self.model = model or getattr(settings, "LLM_CONTEXTUAL_MODEL", "llama-3.1-8b-instant")
             logger.info(f"LLMClient → Groq | model={self.model}")
 
-            # Chuẩn bị Gemini fallback nếu có key
-            if gemini_key:
-                from openai import OpenAI
-                self._fallback_client = OpenAI(api_key=gemini_key, base_url=_GEMINI_BASE_URL)
-                self._fallback_model = "gemini-1.5-flash"
-                logger.info("LLMClient → Gemini fallback ready")
+            # Build danh sách Groq key dự phòng từ GROQ_API_KEYS
+            extra_keys_str = getattr(settings, "GROQ_API_KEYS", "") or os.getenv("GROQ_API_KEYS", "")
+            extra_keys = [k.strip() for k in extra_keys_str.split(",") if k.strip() and k.strip() != groq_key]
+            self._groq_backup_clients = [Groq(api_key=k) for k in extra_keys]
+            self._groq_key_index = 0  # current backup key index
+            if self._groq_backup_clients:
+                logger.info(f"LLMClient → {len(self._groq_backup_clients)} Groq backup key(s) loaded")
+
 
         elif self.provider == "gemini":
             from openai import OpenAI
@@ -140,19 +144,26 @@ class LLMClient:
 
                 if is_rate_limit:
                     logger.warning(f"Rate limit (attempt {attempt}/{self.max_retries}) → chờ {wait_time:.1f}s")
-                    # Auto-fallback sang Gemini nếu Groq rate limit và có fallback
-                    if self._fallback_client is not None:
-                        logger.info("Groq rate limit → fallback sang Gemini")
+
+                    # Thử Groq backup keys trước
+                    backup_clients = getattr(self, "_groq_backup_clients", [])
+                    if backup_clients and self._groq_key_index < len(backup_clients):
+                        backup = backup_clients[self._groq_key_index]
+                        self._groq_key_index += 1
+                        logger.info(f"Groq rate limit → thử backup key #{self._groq_key_index}")
                         try:
-                            resp = self._fallback_client.chat.completions.create(
-                                model=self._fallback_model,
+                            resp = backup.chat.completions.create(
+                                model=self.model,
                                 messages=messages,
                                 max_tokens=max_tokens,
                                 temperature=temperature,
                             )
                             return resp.choices[0].message.content.strip()
-                        except Exception as fe:
-                            logger.warning(f"Gemini fallback cũng lỗi: {fe}")
+                        except Exception as be:
+                            logger.warning(f"Backup key #{self._groq_key_index} lỗi: {be}")
+
+                    # Tất cả Groq keys đã thử — wait và retry
+                    logger.warning(f"Tất cả Groq keys bị rate limit → chờ {wait_time:.1f}s")
                 else:
                     logger.warning(f"LLM attempt {attempt}/{self.max_retries} lỗi: {e}")
 
@@ -198,14 +209,5 @@ class LLMClient:
         try:
             yield from _stream_from(self._client, target_model)
         except Exception as e:
-            err_str = str(e)
-            is_rate_limit = "429" in err_str or "rate_limit" in err_str.lower()
-            if is_rate_limit and self._fallback_client is not None:
-                logger.warning("Groq rate limit (stream) → fallback sang Gemini")
-                try:
-                    yield from _stream_from(self._fallback_client, self._fallback_model)
-                    return
-                except Exception as fe:
-                    logger.warning(f"Gemini stream fallback lỗi: {fe}")
             logger.error(f"Lỗi Streaming LLM: {e}")
             yield f"Lỗi Streaming: {str(e)}"

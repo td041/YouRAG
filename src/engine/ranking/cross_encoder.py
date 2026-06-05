@@ -14,9 +14,9 @@ class CrossEncoderReranker:
     """
 
     def __init__(self):
-        # Đổi sang mô hình mMiniLMv2 (MiniLM) siêu nhẹ. Cực kỳ nhanh, tốn 0.5s thay vì 19s
-        # Hỗ trợ đa ngôn ngữ (Tiếng Việt) và tốn rất ít VRAM
-        self.model_name = getattr(settings, "CROSS_ENCODER_MODEL", "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1")
+        # BGE-reranker-v2-m3: SOTA multilingual reranker (~568M), tiếng Việt tốt hơn mmarco.
+        # Vừa GPU 6GB cùng bge-m3. Fallback về chunks gốc nếu load lỗi.
+        self.model_name = getattr(settings, "CROSS_ENCODER_MODEL", "BAAI/bge-reranker-v2-m3")
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self._model = None
         

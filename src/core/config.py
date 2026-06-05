@@ -21,8 +21,9 @@ class Settings(BaseSettings):
     API_KEY: Optional[SecretStr] = None  # Bearer token bảo vệ các endpoint write
     OPENAI_API_KEY: Optional[SecretStr] = None
     GROQ_API_KEY: Optional[SecretStr] = None
+    GROQ_API_KEYS: str = ""  # Danh sách key dự phòng, cách nhau bởi dấu phẩy: "key1,key2,key3"
     GEMINI_API_KEY: Optional[SecretStr] = None  # Production fallback khi Groq rate limit
-    GEMINI_EVAL_API_KEY: Optional[SecretStr] = None  # Riêng cho RAGAS benchmark evaluator
+    MISTRAL_EVAL_API_KEY: Optional[SecretStr] = None  # RAGAS benchmark evaluator (no daily quota)
     JINA_API_KEY: Optional[SecretStr] = None  # Late Chunking (jina-embeddings-v3)
 
     # 3. Vector Database Engine (QDRANT VƯƠNG GIẢ)
@@ -32,7 +33,7 @@ class Settings(BaseSettings):
 
     # 4. LLM & Nhúng Vector (Brain Models)
     EMBEDDING_MODEL_NAME: str = "BAAI/bge-m3"           
-    CROSS_ENCODER_MODEL: str = "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1" 
+    CROSS_ENCODER_MODEL: str = "BAAI/bge-reranker-v2-m3"  # SOTA multilingual reranker (tiếng Việt tốt hơn mmarco)
     LLM_MODEL_NAME: str = "llama-3.3-70b-versatile"     
     LLM_CONTEXTUAL_MODEL: str = "llama-3.1-8b-instant"  
     LLM_PROVIDER: Literal["groq", "openai", "ollama"] = "groq"
@@ -50,7 +51,7 @@ class Settings(BaseSettings):
     CHUNK_SIZE: int = 800
     CHUNK_OVERLAP: int = 150
     SUMMARIZER_MAX_CHUNKS: int = 12   # Số chunks tối đa để summarize (Groq TPM limit)
-    GRAPH_MAX_CHUNKS: int = 15        # Số chunks tối đa để build knowledge graph
+    GRAPH_MAX_CHUNKS: int = 40        # Số chunks tối đa để build knowledge graph (video dài cần nhiều hơn)
     YOUTUBE_FETCH_TIMEOUT: int = 120  # Timeout (seconds) cho YouTube metadata + transcript fetch
 
     # 7. Cấu hình Kết nối (Connection Hub)

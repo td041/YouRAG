@@ -99,7 +99,7 @@ async def startup_event():
 class IngestRequest(BaseModel):
     url: str
     use_contextual: bool = False
-    use_late_chunking: bool = False  # Jina Late Chunking (cần JINA_API_KEY)
+    use_late_chunking: bool = True  # Jina Late Chunking (cần JINA_API_KEY, fallback bge-m3 nếu lỗi)
 
 class ChatRequest(BaseModel):
     query: str
@@ -349,7 +349,7 @@ async def chat_rag(request: Request, req: ChatRequest, _: str = Depends(require_
         graph_data = AIStore.graph_retriever.search(req.query, collection_name=req.collection)
 
         # 3. Rerank
-        final_chunks = AIStore.reranker.rerank(query=req.query, chunks=candidates, top_k=4)
+        final_chunks = AIStore.reranker.rerank(query=req.query, chunks=candidates, top_k=9)
 
         # 4. Global Summary
         global_summary = AIStore.summarizer.summarize(req.collection)
@@ -451,7 +451,7 @@ async def chat_rag_stream(request: Request, req: ChatRequest, _: str = Depends(r
         graph_data = AIStore.graph_retriever.search(req.query, collection_name=req.collection)
 
         # 3. Rerank
-        final_chunks = AIStore.reranker.rerank(query=req.query, chunks=candidates, top_k=4)
+        final_chunks = AIStore.reranker.rerank(query=req.query, chunks=candidates, top_k=9)
 
         # 4. Global Summary
         global_summary = AIStore.summarizer.summarize(req.collection)
