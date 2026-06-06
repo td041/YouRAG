@@ -9,6 +9,8 @@ from slowapi.errors import RateLimitExceeded
 import os
 import sys
 import uuid
+import time
+import threading
 
 # Đảm bảo import được module từ thư mục gốc
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
@@ -40,9 +42,20 @@ logger = setup_logger("YouRAG_API")
 # Rate limiter — dùng IP address làm key
 limiter = Limiter(key_func=get_remote_address)
 
+# Prometheus metrics
+try:
+    from prometheus_fastapi_instrumentator import Instrumentator
+    _prometheus_available = True
+except ImportError:
+    _prometheus_available = False
+
 app = FastAPI(title="YouRAG Backend API", version="1.0.0")
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# Expose /metrics for Prometheus scraping
+if _prometheus_available:
+    Instrumentator().instrument(app).expose(app)
 
 app.add_middleware(
     CORSMiddleware,
@@ -92,6 +105,10 @@ async def startup_event():
 
     loaded = [k for k, v in vars(AIStore).items() if not k.startswith("_") and v is not None]
     logger.info(f"✅ Startup complete. Loaded: {loaded}")
+
+    # Start Redis Stream worker for ingest queue
+    t = threading.Thread(target=_stream_worker_loop, daemon=True, name="stream-worker")
+    t.start()
 
 # ─────────────────────────────────────────────
 # MODELS (Pydantic)
@@ -193,6 +210,78 @@ def _job_update(job_id: str, patch: dict) -> None:
     _job_set(job_id, data)
 
 
+# ── Redis Streams worker ──────────────────────────────────────────────────────
+_STREAM_KEY = "yourag:ingest"
+_STREAM_GROUP = "workers"
+_STREAM_CONSUMER = "worker-1"
+_stream_worker_active = False
+
+
+def _process_stream_msg(r, msg_id: str, fields: dict) -> None:
+    """Execute one ingest job from the stream then acknowledge it."""
+    job_id = fields.get("job_id", "")
+    url = fields.get("url", "")
+    use_contextual = fields.get("use_contextual", "false") == "true"
+    use_late_chunking = fields.get("use_late_chunking", "false") == "true"
+    try:
+        _run_ingest_job(job_id, url, use_contextual, use_late_chunking)
+    finally:
+        try:
+            r.xack(_STREAM_KEY, _STREAM_GROUP, msg_id)
+        except Exception as e:
+            logger.warning(f"[StreamWorker] xack failed {msg_id}: {e}")
+
+
+def _stream_worker_loop() -> None:
+    """Daemon thread: pulls ingest jobs from Redis Stream with consumer group."""
+    global _stream_worker_active
+    r = _get_redis()
+    if not r:
+        logger.warning("[StreamWorker] Redis unavailable — worker not started, fallback to threads")
+        return
+
+    # Create consumer group — ignore BUSYGROUP if already exists
+    try:
+        r.xgroup_create(_STREAM_KEY, _STREAM_GROUP, id="0", mkstream=True)
+        logger.info(f"[StreamWorker] Consumer group '{_STREAM_GROUP}' created")
+    except Exception:
+        pass
+
+    # Crash recovery: reclaim messages stuck > 60s from a previous process
+    try:
+        pending = r.xpending_range(_STREAM_KEY, _STREAM_GROUP, "-", "+", count=20)
+        for p in pending:
+            if p["time_since_delivered"] > 60_000:
+                claimed = r.xclaim(_STREAM_KEY, _STREAM_GROUP, _STREAM_CONSUMER, 60_000, [p["message_id"]])
+                for claim_id, fields in claimed:
+                    logger.info(f"[StreamWorker] Recovering stuck job {fields.get('job_id')}")
+                    _process_stream_msg(r, claim_id, fields)
+    except Exception as e:
+        logger.warning(f"[StreamWorker] Pending recovery error: {e}")
+
+    _stream_worker_active = True
+    logger.info("[StreamWorker] Ready — listening on 'yourag:ingest'")
+
+    while _stream_worker_active:
+        try:
+            messages = r.xreadgroup(
+                _STREAM_GROUP, _STREAM_CONSUMER,
+                {_STREAM_KEY: ">"},
+                count=1,
+                block=5000,  # 5s timeout so we can check _stream_worker_active
+            )
+            if not messages:
+                continue
+            for _sname, msgs in messages:
+                for msg_id, fields in msgs:
+                    logger.info(f"[StreamWorker] Dequeued job {fields.get('job_id')}")
+                    _process_stream_msg(r, msg_id, fields)
+        except Exception as e:
+            if _stream_worker_active:
+                logger.error(f"[StreamWorker] Error: {e}")
+                time.sleep(1)
+
+
 def _invalidate_bm25_cache(collection_name: str) -> None:
     """Invalidate BM25 in-memory cache for a collection (called on ingest and delete)."""
     if AIStore.hybrid_retriever:
@@ -281,9 +370,24 @@ async def ingest_video(request: Request, req: IngestRequest, background_tasks: B
         raise HTTPException(status_code=422, detail="Invalid YouTube URL. Supported formats: youtube.com/watch?v=..., youtu.be/..., youtube.com/shorts/...")
     job_id = str(uuid.uuid4())
     _job_set(job_id, {"status": "queued", "url": req.url})
-    background_tasks.add_task(
-        _run_ingest_job, job_id, req.url, req.use_contextual, req.use_late_chunking
-    )
+
+    r = _get_redis()
+    if r and _stream_worker_active:
+        # Redis Streams path — survives API restart, enables crash recovery
+        r.xadd(_STREAM_KEY, {
+            "job_id": job_id,
+            "url": req.url,
+            "use_contextual": str(req.use_contextual).lower(),
+            "use_late_chunking": str(req.use_late_chunking).lower(),
+        })
+        logger.info(f"[Ingest] Job {job_id} queued via Redis Stream")
+    else:
+        # Fallback — Redis unavailable or worker not ready
+        background_tasks.add_task(
+            _run_ingest_job, job_id, req.url, req.use_contextual, req.use_late_chunking
+        )
+        logger.info(f"[Ingest] Job {job_id} queued via BackgroundTasks (Redis fallback)")
+
     return {"job_id": job_id, "status": "queued"}
 
 
