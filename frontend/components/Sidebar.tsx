@@ -98,7 +98,7 @@ export default function Sidebar({ collections, selected, apiOnline, theme, onSel
   const selectedItemBorder = isDark ? "rgba(255,255,255,0.08)" : "rgba(99,102,241,0.2)";
 
   const isIngesting = status === "queued" || status === "running";
-  const currentStep = stepIndex(status);
+  void stepIndex(status);
 
   return (
     <aside className="flex flex-col h-full w-[280px] shrink-0 z-20 overflow-hidden" style={{ background: sidebarBg, borderRight: `1px solid ${borderColor}` }}>

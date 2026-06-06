@@ -1,11 +1,14 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import rehypeRaw from "rehype-raw";
 import { Message, Collection } from "@/lib/types";
 import { streamChat, fetchSuggestions } from "@/lib/api";
 import {
   Send, Trash2, Layers, Zap,
-  Cpu, Sparkles, User, Bot, Clock, Loader2, ExternalLink
+  Cpu, Sparkles, User, Bot, Clock, Loader2, ExternalLink, Search
 } from "lucide-react";
 
 interface Props {
@@ -33,39 +36,63 @@ function superscriptNumber(n: number): string {
 }
 
 function MessageContent({ content, onSourceClick }: { content: string; onSourceClick?: (t: number) => void }) {
-  if (!onSourceClick) return <span>{content}</span>;
+  // Pre-compute timestamp footnotes in document order (stable indices across renders)
+  const seenLabels: string[] = [];
+  const footnoteMap = new Map<string, number>();
+  const tsRegex = /\[(\d{1,2}:\d{2})\]/g;
+  let m: RegExpExecArray | null;
+  while ((m = tsRegex.exec(content)) !== null) {
+    const label = m[1];
+    if (!footnoteMap.has(label)) {
+      footnoteMap.set(label, seenLabels.length);
+      seenLabels.push(label);
+    }
+  }
 
-  const footnotes: { label: string; seconds: number }[] = [];
-  const parts = content.split(/(\[\d{1,2}:\d{2}\])/g);
+  // Replace [mm:ss] with a safe HTML tag that rehype-raw will pass through
+  const processed = content.replace(/\[(\d{1,2}:\d{2})\]/g, '<ts data-ts="$1"></ts>');
 
   return (
-    <>
-      {parts.map((part, i) => {
-        const match = part.match(/^\[(\d{1,2}:\d{2})\]$/);
-        if (match) {
-          const existing = footnotes.findIndex(f => f.label === match[1]);
-          let idx: number;
-          if (existing !== -1) {
-            idx = existing;
-          } else {
-            footnotes.push({ label: match[1], seconds: parseTimeToSeconds(match[1]) });
-            idx = footnotes.length - 1;
-          }
-          const num = superscriptNumber(idx + 1);
-          return (
-            <button
-              key={i}
-              onClick={() => onSourceClick(footnotes[idx].seconds)}
-              className="text-indigo-400/80 hover:text-indigo-300 transition-colors cursor-pointer leading-none align-super text-[10px]"
-              title={`Jump to ${match[1]}`}
-            >
-              {num}
-            </button>
-          );
-        }
-        return <span key={i}>{part}</span>;
-      })}
-    </>
+    <div className="prose prose-sm max-w-none leading-relaxed
+      prose-p:my-1 prose-p:last:mb-0
+      prose-ul:my-1 prose-ul:pl-4
+      prose-ol:my-1 prose-ol:pl-4
+      prose-li:my-0
+      prose-strong:font-semibold
+      prose-code:text-xs prose-code:px-1 prose-code:py-0.5 prose-code:rounded
+      prose-pre:text-xs prose-pre:p-3 prose-pre:rounded-lg prose-pre:overflow-x-auto
+      [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        rehypePlugins={[rehypeRaw]}
+        components={({
+          // Custom timestamp citation button
+          ts: (props: { "data-ts"?: string } & React.HTMLAttributes<HTMLElement>) => {
+            const time = props["data-ts"] ?? "";
+            const idx = footnoteMap.get(time) ?? 0;
+            const seconds = parseTimeToSeconds(time);
+            return (
+              <button
+                onClick={() => onSourceClick?.(seconds)}
+                className="text-indigo-400/80 hover:text-indigo-300 transition-colors cursor-pointer leading-none align-super text-[10px]"
+                title={`Jump to ${time}`}
+              >
+                {superscriptNumber(idx + 1)}
+              </button>
+            );
+          },
+          // Inline code vs code block
+          code: ({ children, className }: React.HTMLAttributes<HTMLElement>) => {
+            const isBlock = typeof className === "string" && className.startsWith("language-");
+            return isBlock
+              ? <code className="block bg-black/20 rounded-lg p-3 text-xs font-mono overflow-x-auto">{children}</code>
+              : <code className="bg-black/20 dark:bg-white/10 px-1 py-0.5 rounded text-[0.8em] font-mono">{children}</code>;
+          },
+        } as Parameters<typeof ReactMarkdown>[0]["components"])}
+      >
+        {processed}
+      </ReactMarkdown>
+    </div>
   );
 }
 
@@ -76,6 +103,7 @@ export default function ChatPanel({ collection, theme, onSourceClick }: Props) {
   const [sessionId, setSessionId] = useState<string | undefined>();
   const [welcomeSuggestions, setWelcomeSuggestions] = useState<string[]>([]);
   const [loadingSuggestions, setLoadingSuggestions] = useState(false);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<(() => void) | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -107,8 +135,15 @@ export default function ChatPanel({ collection, theme, onSourceClick }: Props) {
   }, [collection?.name]);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    // Instant scroll during streaming to avoid jank; smooth for new messages
+    if (streaming) {
+      el.scrollTop = el.scrollHeight;
+    } else {
+      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [messages, streaming]);
 
   function handleSend(overrideQuery?: string) {
     const query = overrideQuery || input.trim();
@@ -183,7 +218,7 @@ export default function ChatPanel({ collection, theme, onSourceClick }: Props) {
       </div>
 
       {/* Messages area */}
-      <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-6 sm:py-8 custom-scrollbar">
+      <div ref={scrollContainerRef} className="flex-1 overflow-y-auto px-4 sm:px-6 py-6 sm:py-8 custom-scrollbar">
         <div className="max-w-3xl mx-auto space-y-8 sm:space-y-10">
 
           {/* Welcome screen */}
@@ -269,12 +304,22 @@ export default function ChatPanel({ collection, theme, onSourceClick }: Props) {
                       color: textMain,
                       border: `1px solid ${msg.role === "user" ? "rgba(255,255,255,0.05)" : msgBotBorder}`,
                     }}>
-                    {msg.role === "assistant"
-                      ? <MessageContent content={msg.content} onSourceClick={onSourceClick} />
-                      : msg.content}
-                    {streaming && i === messages.length - 1 && msg.role === "assistant" && (
-                      <span className="inline-block w-1.5 h-4 bg-indigo-500 ml-1 rounded-sm blink align-middle" />
-                    )}
+                    {msg.role === "assistant" ? (
+                      msg.content === "" && streaming && i === messages.length - 1 ? (
+                        // TTFT indicator — retrieval phase before first token arrives
+                        <span className="flex items-center gap-2 text-[13px]" style={{ color: textDim }}>
+                          <Search size={13} className="animate-pulse text-indigo-400" />
+                          <span className="animate-pulse">Searching...</span>
+                        </span>
+                      ) : (
+                        <>
+                          <MessageContent content={msg.content} onSourceClick={onSourceClick} />
+                          {streaming && i === messages.length - 1 && (
+                            <span className="inline-block w-1.5 h-4 bg-indigo-500 ml-1 rounded-sm blink align-middle" />
+                          )}
+                        </>
+                      )
+                    ) : msg.content}
                   </div>
 
                   {/* Source chips — clickable to seek + open in YouTube */}
