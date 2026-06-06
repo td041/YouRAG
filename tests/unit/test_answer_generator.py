@@ -219,12 +219,12 @@ def test_generate_stream_error_yields_error(mock_llm_client, mock_semantic_cache
     results = list(generator.generate_stream(query="test", retrieved_chunks=[_make_chunk()]))
 
     assert len(results) == 1
-    assert "Lỗi" in results[0]
+    assert "Error" in results[0] or "Lỗi" in results[0]
 
 
-def test_generate_stream_with_graph_facts_uses_correction(mock_llm_client, mock_semantic_cache):
-    """Kiểm tra generate_stream với graph_facts: dùng chat_complete (draft+correct) thay vì stream."""
-    mock_llm_client.chat_complete.return_value = "Corrected answer"
+def test_generate_stream_with_graph_facts_uses_stream(mock_llm_client, mock_semantic_cache):
+    """graph_facts are injected into the prompt — generate_stream always uses true LLM streaming."""
+    mock_llm_client.chat_complete_stream.return_value = iter(["Graph-aware answer"])
 
     generator = AnswerGenerator()
     results = list(generator.generate_stream(
@@ -233,12 +233,10 @@ def test_generate_stream_with_graph_facts_uses_correction(mock_llm_client, mock_
         graph_summary="Summary"
     ))
 
-    # Với graph_facts → dùng chat_complete 2 lần (draft + correction), không dùng chat_complete_stream
-    assert mock_llm_client.chat_complete.call_count == 2
-    mock_llm_client.chat_complete_stream.assert_not_called()
-    # Kết quả stream word-by-word từ corrected answer
-    full_text = "".join(results)
-    assert "Corrected answer" in full_text
+    # Always streams directly regardless of graph_facts
+    mock_llm_client.chat_complete_stream.assert_called_once()
+    mock_llm_client.chat_complete.assert_not_called()
+    assert "Graph-aware answer" in "".join(results)
 
 
 def test_generate_with_chat_history(mock_llm_client, mock_semantic_cache, mocker):

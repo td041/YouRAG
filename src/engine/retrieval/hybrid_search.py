@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 from typing import List, Dict, Any
 from src.engine.retrieval.dense_search import DenseRetriever
 from src.engine.retrieval.sparse_search import SparseRetriever
@@ -29,9 +30,12 @@ class HybridRetriever:
         """Tìm kiếm Hybrid sử dụng Reciprocal Rank Fusion (RRF)."""
         logger.info(f"✨ Hybrid Search (RRF): '{query}' -> [{collection_name}]")
         
-        # 1. Chạy 2 engine tìm kiếm song song (hoặc tuần tự cho dễ)
-        dense_results = self.dense.search(query, collection_name, filters)
-        sparse_results = self.sparse.search(query, collection_name)
+        # 1. Dense + Sparse chạy song song — tiết kiệm ~300ms mỗi query
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            future_dense = executor.submit(self.dense.search, query, collection_name, filters)
+            future_sparse = executor.submit(self.sparse.search, query, collection_name)
+            dense_results = future_dense.result()
+            sparse_results = future_sparse.result()
         
         if not dense_results and not sparse_results:
             return []

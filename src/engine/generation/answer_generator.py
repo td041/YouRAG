@@ -174,12 +174,11 @@ class AnswerGenerator:
         graph_summary: Optional[str] = None,
         chat_history: str = "",
     ):
-        """Streaming với Self-Correction và Citation Grounding.
-
-        Khi có graph_facts: generate draft (non-stream) → self-correct → validate citations → stream kết quả.
-        Khi không có graph_facts: stream trực tiếp + validate citations sau khi xong.
+        """True LLM streaming — graph_facts already injected into system_prompt so the model
+        sees them on first pass. Self-correction (2 extra LLM calls) is reserved for the
+        non-streaming generate() path used by batch evaluation.
         """
-        logger.info(f"✨ Production Streaming (Graph Enhanced): '{query}'")
+        logger.info(f"✨ Streaming (graph_facts={'yes' if graph_facts else 'no'}): '{query}'")
 
         if not retrieved_chunks:
             logger.warning("[AnswerGenerator] No chunks retrieved — returning no-context reply")
@@ -191,49 +190,22 @@ class AnswerGenerator:
         )
 
         try:
-            if graph_facts:
-                # Generate draft first (non-streaming) so we can self-correct before sending to user
-                logger.info("🔍 Stream mode: generating draft for self-correction...")
-                draft_answer = self.llm.chat_complete(
-                    prompt=user_prompt,
-                    system=system_prompt,
-                    max_tokens=2000,
-                    temperature=0.2,
-                )
+            accumulated = []
+            for chunk in self.llm.chat_complete_stream(
+                prompt=user_prompt,
+                system=system_prompt,
+                max_tokens=2000,
+                temperature=0.2,
+            ):
+                accumulated.append(chunk)
+                yield chunk
 
-                check_prompt = PromptBuilder.build_self_correction_prompt(query, draft_answer, graph_facts)
-                final_answer = self.llm.chat_complete(
-                    prompt=check_prompt,
-                    system="Bạn là một kiểm toán viên nghiêm khắc. Sửa lỗi dựa trên Graph Facts.",
-                    max_tokens=2000,
-                    temperature=0.1,
-                )
-
-                # Citation Grounding
-                final_answer = self._validate_citations(final_answer, retrieved_chunks)
-
-                # Stream the corrected answer word-by-word for smooth UX
-                words = final_answer.split(" ")
-                for i, word in enumerate(words):
-                    yield word + (" " if i < len(words) - 1 else "")
-            else:
-                # Fast path: stream directly, then validate citations on accumulated buffer
-                accumulated = []
-                for chunk in self.llm.chat_complete_stream(
-                    prompt=user_prompt,
-                    system=system_prompt,
-                    max_tokens=2000,
-                    temperature=0.2,
-                ):
-                    accumulated.append(chunk)
-                    yield chunk
-
-                # Post-stream citation grounding (logs warnings, no UI impact since already sent)
-                full_text = "".join(accumulated)
-                validated = self._validate_citations(full_text, retrieved_chunks)
-                if validated != full_text:
-                    logger.warning("[CitationGrounding] Stream had ungrounded citations (already sent to client)")
+            # Post-stream citation grounding — logs only, answer already sent
+            full_text = "".join(accumulated)
+            validated = self._validate_citations(full_text, retrieved_chunks)
+            if validated != full_text:
+                logger.warning("[CitationGrounding] Stream had ungrounded citations (already sent to client)")
 
         except Exception as e:
-            logger.error(f"❌ Lỗi Streaming: {e}")
-            yield f"\n[Lỗi: {str(e)}]"
+            logger.error(f"❌ Streaming error: {e}")
+            yield f"\n[Error: {str(e)}]"
