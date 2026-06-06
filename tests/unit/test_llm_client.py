@@ -11,7 +11,6 @@ def mock_settings_and_providers(mocker):
     mock_s.LLM_PROVIDER = "groq"
     mock_s.GROQ_API_KEY.get_secret_value.return_value = "fake_groq_key"
     mock_s.OPENAI_API_KEY = None
-    mock_s.GEMINI_API_KEY = None
     mock_s.LLM_CONTEXTUAL_MODEL = "llama-3.1-8b-instant"
     mock_s.LLM_MODEL_NAME = "llama-3.3-70b-versatile"
     mock_s.OLLAMA_BASE_URL = "http://localhost:11434/v1"
@@ -57,7 +56,7 @@ def test_provider_selection_ollama(mock_settings_and_providers):
 
 def test_invalid_provider_raises():
     """Kiểm tra ValueError khi provider không được hỗ trợ."""
-    with pytest.raises(ValueError, match="Provider không hỗ trợ"):
+    with pytest.raises(ValueError, match="Unsupported provider"):
         LLMClient(provider="unknown_provider")
 
 
@@ -126,7 +125,7 @@ def test_chat_complete_raises_after_max_retries():
         mock_groq_instance.chat.completions.create.side_effect = Exception("persistent failure")
 
         client = LLMClient(provider="groq", max_retries=3)
-        with pytest.raises(RuntimeError, match="LLM call thất bại"):
+        with pytest.raises(RuntimeError, match="LLM call failed"):
             client.chat_complete("test prompt")
 
     assert mock_groq_instance.chat.completions.create.call_count == 3
@@ -183,40 +182,6 @@ def test_openai_provider_selection(mock_settings_and_providers):
     assert client.provider == "openai"
 
 
-# ── Gemini tests ───────────────────────────────────────────────────────────
-
-def test_gemini_provider_selection(mock_settings_and_providers):
-    """Kiểm tra LLMClient chọn Gemini khi LLM_PROVIDER='gemini'."""
-    import sys
-    mock_openai_module = MagicMock()
-    mock_openai_module.OpenAI = MagicMock(return_value=MagicMock())
-    mock_settings_and_providers.LLM_PROVIDER = "gemini"
-    mock_settings_and_providers.GEMINI_API_KEY = MagicMock()
-    mock_settings_and_providers.GEMINI_API_KEY.get_secret_value.return_value = "fake_gemini_key"
-    with patch.dict(sys.modules, {"openai": mock_openai_module}):
-        client = LLMClient(provider="gemini")
-    assert client.provider == "gemini"
-    assert client.model == "gemini-1.5-flash"
-
-
-def test_gemini_chat_complete_success(mock_settings_and_providers):
-    """Kiểm tra chat_complete với Gemini provider."""
-    import sys
-    mock_openai_module = MagicMock()
-    mock_client = MagicMock()
-    mock_openai_module.OpenAI.return_value = mock_client
-    mock_client.chat.completions.create.return_value = _make_response("Gemini response")
-
-    mock_settings_and_providers.LLM_PROVIDER = "gemini"
-    mock_settings_and_providers.GEMINI_API_KEY = MagicMock()
-    mock_settings_and_providers.GEMINI_API_KEY.get_secret_value.return_value = "fake_gemini_key"
-
-    with patch.dict(sys.modules, {"openai": mock_openai_module}):
-        client = LLMClient(provider="gemini")
-        result = client.chat_complete("test prompt")
-
-    assert result == "Gemini response"
-    assert client.model == "gemini-1.5-flash"
 
 
 def test_groq_rate_limit_tries_backup_key(mock_settings_and_providers):

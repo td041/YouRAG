@@ -22,7 +22,6 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: Optional[SecretStr] = None
     GROQ_API_KEY: Optional[SecretStr] = None
     GROQ_API_KEYS: str = ""  # Danh sách key dự phòng, cách nhau bởi dấu phẩy: "key1,key2,key3"
-    GEMINI_API_KEY: Optional[SecretStr] = None  # Production fallback khi Groq rate limit
     MISTRAL_EVAL_API_KEY: Optional[SecretStr] = None  # RAGAS benchmark evaluator (no daily quota)
     JINA_API_KEY: Optional[SecretStr] = None  # Late Chunking (jina-embeddings-v3)
 
@@ -36,7 +35,7 @@ class Settings(BaseSettings):
     CROSS_ENCODER_MODEL: str = "BAAI/bge-reranker-v2-m3"  # SOTA multilingual reranker (tiếng Việt tốt hơn mmarco)
     LLM_MODEL_NAME: str = "llama-3.3-70b-versatile"     
     LLM_CONTEXTUAL_MODEL: str = "llama-3.1-8b-instant"  
-    LLM_PROVIDER: Literal["groq", "openai", "ollama"] = "groq"
+    LLM_PROVIDER: Literal["groq", "openai", "ollama"] = "groq"  # gemini removed
     OLLAMA_BASE_URL: str = "http://localhost:11434/v1"
 
     # 5. Cấu hình vận hành (System Dials)
