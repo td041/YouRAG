@@ -124,10 +124,68 @@ services:
     networks:
       - yourag_network
 
+  # ─── MONITORING STACK ─────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: yourag-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=7d"
+    restart: unless-stopped
+    networks:
+      - yourag_network
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: yourag-grafana
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
+    restart: unless-stopped
+    networks:
+      - yourag_network
+
+  loki:
+    image: grafana/loki:latest
+    container_name: yourag-loki
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./monitoring/loki.yml:/etc/loki/local-config.yaml
+      - loki_data:/loki
+    command: -config.file=/etc/loki/local-config.yaml
+    restart: unless-stopped
+    networks:
+      - yourag_network
+
+  promtail:
+    image: grafana/promtail:latest
+    container_name: yourag-promtail
+    volumes:
+      - ./monitoring/promtail.yml:/etc/promtail/config.yml
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: -config.file=/etc/promtail/config.yml
+    restart: unless-stopped
+    networks:
+      - yourag_network
+
 volumes:
   qdrant_data:
   postgres_data:
   redis_data:
+  prometheus_data:
+  grafana_data:
+  loki_data:
 
 networks:
   yourag_network:

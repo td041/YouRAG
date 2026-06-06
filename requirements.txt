@@ -93,3 +93,4 @@ win32-setctime==1.2.0 ; python_version >= "3.10" and python_version < "3.13" and
 yarl==1.23.0 ; python_version >= "3.10" and python_version < "3.13"
 youtube-transcript-api==1.2.4 ; python_version >= "3.10" and python_version < "3.13"
 slowapi>=0.1.9
+prometheus-fastapi-instrumentator>=6.0.0
