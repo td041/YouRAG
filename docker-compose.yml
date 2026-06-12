@@ -27,6 +27,7 @@ services:
       - POSTGRES_DB=yourag_db
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres-init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     restart: unless-stopped
     networks:
       - yourag_network
@@ -77,6 +78,9 @@ services:
       - DEVICE=cuda
       - REDIS_URL=redis://redis:6379/0
       - DATABASE_URL=postgresql://yourag_user:yourag_pass@postgres:5432/yourag_db
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
+      - LANGFUSE_HOST=http://langfuse:3000
     deploy:
       resources:
         limits:
@@ -123,6 +127,42 @@ services:
     restart: unless-stopped
     networks:
       - yourag_network
+
+  # ─── TRACING ──────────────────────────────────────────────────────
+  langfuse:
+    image: langfuse/langfuse:2
+    container_name: yourag-langfuse
+    ports:
+      - "3002:3000"
+    environment:
+      - DATABASE_URL=postgresql://yourag_user:yourag_pass@postgres:5432/langfuse_db
+      - NEXTAUTH_URL=http://localhost:3002
+      - NEXTAUTH_SECRET=${LANGFUSE_NEXTAUTH_SECRET:-langfuse-dev-secret-change-in-prod}
+      - SALT=${LANGFUSE_SALT:-langfuse-dev-salt-change-in-prod}
+      - TELEMETRY_ENABLED=false
+      - LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES=true
+      # Auto-seed admin account + project on first start
+      - LANGFUSE_INIT_ORG_ID=yourag-org
+      - LANGFUSE_INIT_ORG_NAME=YouRAG
+      - LANGFUSE_INIT_PROJECT_ID=yourag-project
+      - LANGFUSE_INIT_PROJECT_NAME=YouRAG Production
+      - LANGFUSE_INIT_PROJECT_PUBLIC_KEY=lf-pk-yourag-local
+      - LANGFUSE_INIT_PROJECT_SECRET_KEY=lf-sk-yourag-local
+      - LANGFUSE_INIT_USER_EMAIL=admin@gmail.com
+      - LANGFUSE_INIT_USER_NAME=admin
+      - LANGFUSE_INIT_USER_PASSWORD=admin1234
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - yourag_network
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://'+require('os').hostname()+':3000/api/public/health',r=>{process.exit(r.statusCode===200?0:1)}).on('error',()=>process.exit(1))\""]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
 
   # ─── MONITORING STACK ─────────────────────────────────────────────
   prometheus:

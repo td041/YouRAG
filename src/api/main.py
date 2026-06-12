@@ -28,6 +28,7 @@ from src.core.postgres import init_db
 from src.core.logger import setup_logger
 from src.cache.semantic_cache import SemanticCache
 from src.api.auth import require_api_key
+from src.core.langfuse_client import get_langfuse
 import re
 import json
 
@@ -563,6 +564,41 @@ async def chat_rag_stream(request: Request, req: ChatRequest, _: str = Depends(r
         # 5. Streaming Generator
         def response_generator():
             full_response = ""
+            _lf = get_langfuse()
+            _trace = None
+            _gen_span = None
+
+            if _lf:
+                try:
+                    _trace = _lf.trace(
+                        name="rag-query",
+                        session_id=session_id,
+                        input={"query": req.query, "collection": req.collection},
+                        tags=["streaming"],
+                    )
+                    # Retrieval is already complete — log as a finished span
+                    _retrieval_span = _trace.span(
+                        name="retrieval",
+                        input={"query": req.query, "top_k": 10},
+                    )
+                    _retrieval_span.end(output={
+                        "candidates": len(candidates),
+                        "reranked": len(final_chunks),
+                        "top_score": round(final_chunks[0].get("hybrid_score", 0), 4) if final_chunks else 0,
+                        "graph_facts": len(graph_data.get("facts", [])),
+                    })
+                    _gen_span = _trace.generation(
+                        name="llm-stream",
+                        model=settings.LLM_MODEL_NAME,
+                        model_parameters={"temperature": 0.2, "max_tokens": 2000},
+                        input={
+                            "chunks_count": len(final_chunks),
+                            "has_graph": bool(graph_data.get("facts")),
+                        },
+                    )
+                except Exception:
+                    pass
+
             try:
                 for chunk in AIStore.generator.generate_stream(
                     query=req.query,
@@ -576,8 +612,29 @@ async def chat_rag_stream(request: Request, req: ChatRequest, _: str = Depends(r
                     yield chunk
             except Exception as e:
                 logger.error(f"[Stream] Generation error: {e}")
+                if _lf:
+                    try:
+                        if _gen_span:
+                            _gen_span.end(level="ERROR", status_message=str(e))
+                        if _trace:
+                            _trace.update(level="ERROR", status_message=str(e))
+                        _lf.flush()
+                    except Exception:
+                        pass
                 yield f"\n\n[Error: {str(e)}]"
                 return
+
+            if _lf:
+                try:
+                    if _gen_span:
+                        _gen_span.end(
+                            output=full_response[:2000],
+                            usage={"output": len(full_response.split())},
+                        )
+                    if _trace:
+                        _trace.update(output={"answer_length": len(full_response)})
+                except Exception:
+                    pass
 
             # Lưu lại tin nhắn AI sau khi stream xong
             history_mgr.add_message(role="assistant", content=full_response)
@@ -605,6 +662,12 @@ async def chat_rag_stream(request: Request, req: ChatRequest, _: str = Depends(r
                 suggestions = [s.strip() for s in sq_list.replace('\n', '').split("|") if s.strip()]
             except Exception as e:
                 logger.error(f"Error generating suggestions: {e}")
+
+            if _lf:
+                try:
+                    _lf.flush()
+                except Exception:
+                    pass
 
             # Single JSON meta frame — safe against LLM output containing delimiter strings
             meta = json.dumps({

@@ -58,6 +58,11 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "sqlite:///./qdrant_db/chat_history.db"
     REDIS_URL: str = "redis://localhost:6379/0"
 
+    # 8. Observability — Langfuse LLM Tracing (optional)
+    LANGFUSE_PUBLIC_KEY: Optional[str] = None
+    LANGFUSE_SECRET_KEY: Optional[SecretStr] = None
+    LANGFUSE_HOST: str = "http://langfuse:3000"
+
     # Pydantic v2 chuẩn:
     model_config = SettingsConfigDict(
         env_file=".env",
