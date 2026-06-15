@@ -21,6 +21,14 @@ class CrossEncoderReranker:
         self._model = None
         
         # Load mô hình khi khởi tạo
+        if self.device == "cpu":
+            logger.warning(
+                "⚠️ Reranker disabled: no GPU detected. "
+                "Reranking a 568M model on CPU takes 3+ minutes per query — skipping. "
+                "Add a GPU or set CROSS_ENCODER_MODEL to a smaller model to enable."
+            )
+            return
+
         logger.info(f"⏳ Đang tải Cross-Encoder Model: {self.model_name} (Device: {self.device})...")
         try:
             self._model = CrossEncoder(self.model_name, device=self.device)

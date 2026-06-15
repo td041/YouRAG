@@ -1,4 +1,4 @@
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict, Any
 from src.engine.retrieval.dense_search import DenseRetriever
 from src.engine.retrieval.sparse_search import SparseRetriever
@@ -79,3 +79,25 @@ class HybridRetriever:
 
         logger.info(f"✅ Hybrid Search thành công (top {len(final_results)} results)")
         return final_results
+
+    def search_multi(self, query: str, collection_names: List[str]) -> List[Dict[str, Any]]:
+        """Search nhiều collections song song, merge và sort theo hybrid_score."""
+        if len(collection_names) == 1:
+            return self.search(query, collection_names[0])
+
+        logger.info(f"🔍 Multi-collection search: {len(collection_names)} videos")
+        all_results: List[Dict[str, Any]] = []
+
+        with ThreadPoolExecutor(max_workers=min(len(collection_names), 4)) as executor:
+            futures = {executor.submit(self.search, query, name): name for name in collection_names}
+            for future in as_completed(futures):
+                collection_name = futures[future]
+                try:
+                    results = future.result()
+                    all_results.extend(results)
+                except Exception as e:
+                    logger.error(f"Search failed for {collection_name}: {e}")
+
+        # Sort tất cả chunks từ mọi video theo hybrid_score, lấy top k*2
+        all_results.sort(key=lambda x: x.get("hybrid_score", 0), reverse=True)
+        return all_results[: self.top_k * 2]

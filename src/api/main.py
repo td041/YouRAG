@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, Request
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Optional, Dict as TypingDict
+from typing import Optional, Dict as TypingDict, List
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
@@ -37,6 +37,34 @@ _YOUTUBE_URL_RE = re.compile(
     r"(youtube\.com/(watch\?.*v=|shorts/|embed/)|youtu\.be/)"
     r"[A-Za-z0-9_\-]{11}"
 )
+
+
+def _parse_suggestions(raw: str) -> list:
+    """Split LLM output into individual suggestion strings.
+
+    Handles all common formats the model returns:
+      - "Q1|Q2|Q3"
+      - "Q1\\nQ2\\nQ3"
+      - "Q1?Q2?Q3?" (no separator, questions joined by their own mark)
+    Picks whichever split yields the most non-empty parts.
+    """
+    def _clean(s: str) -> str:
+        s = re.sub(r"^[Qq]\d+[\.\:\s]*", "", s).strip()
+        s = re.sub(r"[\s]*[Qq]\d+$", "", s).strip()
+        s = re.sub(r"^[\d\.\-\*\s]+", "", s).strip()
+        return s
+
+    def _split(text: str, sep: str) -> list:
+        if sep == "?":
+            return [p.strip() + "?" for p in text.split("?") if p.strip()]
+        return [p.strip() for p in text.split(sep) if p.strip()]
+
+    best: list = [_clean(raw.strip())] if _clean(raw.strip()) else []
+    for sep in ("|", "\n", "?"):
+        candidate = [_clean(s) for s in _split(raw, sep) if _clean(s)]
+        if len(candidate) > len(best):
+            best = candidate
+    return best
 
 logger = setup_logger("YouRAG_API")
 
@@ -117,12 +145,22 @@ async def startup_event():
 class IngestRequest(BaseModel):
     url: str
     use_contextual: bool = False
-    use_late_chunking: bool = True  # Jina Late Chunking (cần JINA_API_KEY, fallback bge-m3 nếu lỗi)
+    use_late_chunking: bool = True   # Jina Late Chunking (cần JINA_API_KEY, fallback bge-m3 nếu lỗi)
+    use_visual_rag: bool = False     # Visual Frame RAG (cần GEMINI_API_KEY hoặc OPENAI_API_KEY)
 
 class ChatRequest(BaseModel):
     query: str
-    collection: str
+    collection: Optional[str] = None        # single-video (backward compat)
+    collections: Optional[List[str]] = None  # multi-video
     session_id: Optional[str] = None
+
+    @property
+    def resolved_collections(self) -> List[str]:
+        if self.collections:
+            return self.collections
+        if self.collection:
+            return [self.collection]
+        raise ValueError("Phải truyền 'collection' hoặc 'collections'")
 
 # ─────────────────────────────────────────────
 # ENDPOINTS
@@ -224,8 +262,9 @@ def _process_stream_msg(r, msg_id: str, fields: dict) -> None:
     url = fields.get("url", "")
     use_contextual = fields.get("use_contextual", "false") == "true"
     use_late_chunking = fields.get("use_late_chunking", "false") == "true"
+    use_visual_rag = fields.get("use_visual_rag", "false") == "true"
     try:
-        _run_ingest_job(job_id, url, use_contextual, use_late_chunking)
+        _run_ingest_job(job_id, url, use_contextual, use_late_chunking, use_visual_rag)
     finally:
         try:
             r.xack(_STREAM_KEY, _STREAM_GROUP, msg_id)
@@ -290,13 +329,16 @@ def _invalidate_bm25_cache(collection_name: str) -> None:
         AIStore.hybrid_retriever.sparse._doc_mappings.pop(collection_name, None)
 
 
-def _run_ingest_job(job_id: str, url: str, use_contextual: bool, use_late_chunking: bool) -> None:
+def _run_ingest_job(
+    job_id: str, url: str, use_contextual: bool, use_late_chunking: bool, use_visual_rag: bool = False
+) -> None:
     """Background task: chạy ingest và cập nhật trạng thái job."""
     _job_update(job_id, {"status": "running"})
     try:
         pipeline = IngestionPipeline(
             use_contextual_enrichment=use_contextual,
             use_late_chunking=use_late_chunking,
+            use_visual_rag=use_visual_rag,
         )
         result = pipeline.run(url)
         # Invalidate BM25 cache so next query uses fresh chunks
@@ -309,33 +351,59 @@ def _run_ingest_job(job_id: str, url: str, use_contextual: bool, use_late_chunki
 
 @app.get("/collections")
 def list_collections():
-    collections_response = db_instance.client.get_collections()
-    detailed_collections = []
+    from concurrent.futures import ThreadPoolExecutor, as_completed
 
-    for c in collections_response.collections:
-        if c.name in _INTERNAL_COLLECTIONS:
-            continue
+    collections_response = db_instance.client.get_collections()
+    names = [c.name for c in collections_response.collections if c.name not in _INTERNAL_COLLECTIONS]
+
+    def _fetch_meta(name: str) -> dict:
         try:
             records, _ = db_instance.client.scroll(
-                collection_name=c.name,
-                limit=1,
-                with_payload=True,
-                with_vectors=False
+                collection_name=name, limit=1,
+                with_payload=True, with_vectors=False
             )
-
             if records and records[0].payload:
                 meta = records[0].payload
-                detailed_collections.append({
-                    "name": c.name,
-                    "title": meta.get("title", c.name),
-                    "video_id": meta.get("video_id")
-                })
-            else:
-                detailed_collections.append({"name": c.name, "title": c.name, "video_id": None})
+                return {"name": name, "title": meta.get("title", name), "video_id": meta.get("video_id")}
         except Exception:
-            detailed_collections.append({"name": c.name, "title": c.name, "video_id": None})
+            pass
+        return {"name": name, "title": name, "video_id": None}
 
-    return detailed_collections
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        futures = {pool.submit(_fetch_meta, n): n for n in names}
+        results = {futures[f]: f.result() for f in as_completed(futures)}
+
+    return [results[n] for n in names if n in results]
+
+@app.get("/benchmark/report")
+def get_benchmark_report():
+    """Trả về kết quả RAGAS benchmark gần nhất từ tests/benchmark/ragas_report.json."""
+    import os
+    import json as _json
+    import math
+
+    def _sanitize(obj):
+        """Đệ quy thay NaN/Inf bằng None để JSON chuẩn chấp nhận."""
+        if isinstance(obj, float):
+            return None if (math.isnan(obj) or math.isinf(obj)) else obj
+        if isinstance(obj, dict):
+            return {k: _sanitize(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [_sanitize(v) for v in obj]
+        return obj
+
+    report_path = os.path.join("tests", "benchmark", "ragas_report.json")
+    if not os.path.exists(report_path):
+        return {"available": False}
+    try:
+        with open(report_path, encoding="utf-8") as f:
+            # parse_constant=None compat: dùng raw text decode để giữ NaN
+            raw = f.read()
+        data = _json.loads(raw.replace(": NaN", ": null").replace(":NaN", ":null"))
+        return _sanitize({"available": True, **data})
+    except Exception as e:
+        logger.warning(f"[benchmark] Cannot read report: {e}")
+        return {"available": False}
 
 @app.delete("/collections/{collection_name}")
 async def delete_collection(collection_name: str, _: str = Depends(require_api_key)):
@@ -380,12 +448,13 @@ async def ingest_video(request: Request, req: IngestRequest, background_tasks: B
             "url": req.url,
             "use_contextual": str(req.use_contextual).lower(),
             "use_late_chunking": str(req.use_late_chunking).lower(),
+            "use_visual_rag": str(req.use_visual_rag).lower(),
         })
         logger.info(f"[Ingest] Job {job_id} queued via Redis Stream")
     else:
         # Fallback — Redis unavailable or worker not ready
         background_tasks.add_task(
-            _run_ingest_job, job_id, req.url, req.use_contextual, req.use_late_chunking
+            _run_ingest_job, job_id, req.url, req.use_contextual, req.use_late_chunking, req.use_visual_rag
         )
         logger.info(f"[Ingest] Job {job_id} queued via BackgroundTasks (Redis fallback)")
 
@@ -521,12 +590,14 @@ async def chat_rag_stream(request: Request, req: ChatRequest, _: str = Depends(r
     """Endpoint trả về Streaming Response với Global Context."""
     try:
         session_id = req.session_id or str(uuid.uuid4())
-        history_mgr = ChatHistoryManager(session_id=session_id, collection_name=req.collection)
+        # Resolve collections first so history manager always gets a valid name
+        collections_list = req.resolved_collections
+        history_mgr = ChatHistoryManager(session_id=session_id, collection_name=collections_list[0])
         history_mgr.add_message(role="user", content=req.query)
         chat_history_str = history_mgr.format_for_prompt()
 
         # --- CHECK SEMANTIC CACHE ---
-        cached_data = AIStore.cache.check_cache(req.query, collection_name=req.collection)
+        cached_data = AIStore.cache.check_cache(req.query, collection_name=collections_list[0])
         if cached_data:
             def cached_generator():
                 answer = cached_data["answer"]
@@ -543,23 +614,33 @@ async def chat_rag_stream(request: Request, req: ChatRequest, _: str = Depends(r
 
             return StreamingResponse(cached_generator(), media_type="text/plain")
 
-        # 1. Hybrid Search
+        # 1. Hybrid Search (single or multi-collection)
         hybrid = AIStore.hybrid_retriever or HybridRetriever(top_k=10)
-        candidates = hybrid.search(req.query, collection_name=req.collection)
+        candidates = hybrid.search_multi(req.query, collections_list)
 
         if not candidates:
             async def no_result():
                 yield "Không tìm thấy thông tin phù hợp trong video này."
             return StreamingResponse(no_result(), media_type="text/plain")
 
-        # 2. Graph RAG Search (lấy graph_data thật)
-        graph_data = AIStore.graph_retriever.search(req.query, collection_name=req.collection)
+        # 2. Graph RAG Search — merge facts from all selected collections
+        all_facts: list = []
+        all_graph_summary = ""
+        for _col in collections_list:
+            try:
+                _gd = AIStore.graph_retriever.search(req.query, collection_name=_col)
+                all_facts.extend(_gd.get("facts", []))
+                if _gd.get("graph_summary"):
+                    all_graph_summary = _gd["graph_summary"]
+            except Exception:
+                pass
+        graph_data = {"facts": all_facts, "graph_summary": all_graph_summary}
 
         # 3. Rerank
         final_chunks = AIStore.reranker.rerank(query=req.query, chunks=candidates, top_k=9)
 
-        # 4. Global Summary
-        global_summary = AIStore.summarizer.summarize(req.collection)
+        # 4. Global Summary (use first collection for summary)
+        global_summary = AIStore.summarizer.summarize(collections_list[0])
 
         # 5. Streaming Generator
         def response_generator():
@@ -641,7 +722,13 @@ async def chat_rag_stream(request: Request, req: ChatRequest, _: str = Depends(r
 
             from src.core.utils import format_timestamp
             sources = [
-                f"{format_timestamp(c['metadata']['start_time'])}–{format_timestamp(c['metadata']['end_time'])}"
+                {
+                    "label": f"{format_timestamp(c['metadata']['start_time'])}–{format_timestamp(c['metadata']['end_time'])}",
+                    "start_time": c["metadata"].get("start_time", 0),
+                    "video_id": c["metadata"].get("video_id"),
+                    "title": c["metadata"].get("title"),
+                    "chunk_type": c["metadata"].get("chunk_type", "text"),
+                }
                 for c in final_chunks
             ]
 
@@ -649,17 +736,27 @@ async def chat_rag_stream(request: Request, req: ChatRequest, _: str = Depends(r
             AIStore.cache.save_to_cache(
                 query=req.query,
                 answer=full_response,
-                collection_name=req.collection,
+                collection_name=collections_list[0],
                 sources=sources,
                 facts=graph_data.get("facts", [])
             )
 
-            # Generate Suggested Questions
+            # Generate Suggested Questions — grounded in actual retrieved video chunks
             suggestions = []
-            sq_prompt = f"Dựa trên câu hỏi '{req.query}' và câu trả lời '{full_response}', hãy gợi ý đúng 3 câu hỏi ngắn gọn (mỗi câu dưới 12 từ) mà người dùng có thể hỏi tiếp theo. Trả về định dạng: Câu 1|Câu 2|Câu 3. Không gạch đầu dòng, không đánh số."
+            # Only use content that's confirmed to be in the video
+            video_excerpts = "\n".join(
+                f"- {c['content'][:150]}" for c in final_chunks[:4]
+            )
+            sq_prompt = (
+                f"These are real excerpts from the video:\n{video_excerpts}\n\n"
+                f"The user just asked: '{req.query}'\n"
+                "Suggest exactly 3 follow-up questions that can ONLY be answered "
+                "from the video excerpts above — not from general knowledge. "
+                "Output ONLY: question1|question2|question3"
+            )
             try:
-                sq_list = AIStore.generator.llm.chat_complete(sq_prompt, system="Bạn là trợ lý RAG.", max_tokens=100)
-                suggestions = [s.strip() for s in sq_list.replace('\n', '').split("|") if s.strip()]
+                sq_list = AIStore.generator.llm.chat_complete(sq_prompt, system="You are a helpful assistant.", max_tokens=80)
+                suggestions = _parse_suggestions(sq_list)
             except Exception as e:
                 logger.error(f"Error generating suggestions: {e}")
 
@@ -695,8 +792,7 @@ async def get_suggestions(request: Request, collection: str, _: str = Depends(re
             "Trả về định dạng: Câu 1|Câu 2|Câu 3|Câu 4. Không gạch đầu dòng, không đánh số, không giải thích thêm."
         )
         raw = AIStore.generator.llm.chat_complete(prompt, system="Bạn là trợ lý RAG.", max_tokens=120)
-        suggestions = [s.strip() for s in raw.replace("\n", "").split("|") if s.strip()]
-        return {"suggestions": suggestions[:4]}
+        return {"suggestions": _parse_suggestions(raw)[:4]}
     except Exception as e:
         logger.error(f"[suggestions] {e}")
         return {"suggestions": []}

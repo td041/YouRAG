@@ -63,12 +63,14 @@ class VideoSummarizer:
                 chunks = [chunks[int(i * step)] for i in range(MAX_CHUNKS)]
             
             # Ghép lại thành 1 văn bản dài kèm mốc thời gian
+            # Truncate mỗi chunk để tránh vượt TPM limit của Groq free tier (6000 TPM)
+            MAX_CHARS_PER_CHUNK = 300
             full_transcript = []
             for c in chunks:
-                # Bỏ qua phần ngữ cảnh (context) mà Contextual Enrichment chèn vào 
-                # (để tránh lặp từ khi LLM đọc tóm tắt).
+                # Bỏ qua phần ngữ cảnh (context) mà Contextual Enrichment chèn vào
                 raw_text = c["content"].split("\n\n")[-1] if "\n\n" in c["content"] else c["content"]
-                
+                raw_text = raw_text[:MAX_CHARS_PER_CHUNK]
+
                 # Format: [mm:ss] Nội dung đoạn nói
                 ts = format_timestamp(c['start_time'])
                 full_transcript.append(f"[{ts}] {raw_text}")
@@ -98,8 +100,8 @@ Hãy phân tích thật sâu sát, không bỏ sót các mẹo vặt hay điểm
             # Ta giảm max_tokens về 1500 để nhường phần lớn token cho việc đọc Video dài
             summary = self.llm.chat_complete(
                 prompt=prompt,
-                system="Bạn là một chuyên gia phân tích dữ liệu video. Bạn cực kỳ cẩn thận, không được bỏ sót chi tiết và phải giải thích cặn kẽ mọi thứ bằng tiếng Việt.",
-                max_tokens=4000,
+                system="Bạn là một chuyên gia phân tích dữ liệu video. Hãy tóm tắt cô đọng bằng tiếng Việt.",
+                max_tokens=1500,
                 temperature=0.3
             )
             
@@ -144,15 +146,17 @@ Hãy phân tích thật sâu sát, không bỏ sót các mẹo vặt hay điểm
                 })
             chunks.sort(key=lambda x: x["index"])
 
-            # Uniform Sampling
-            MAX_CHUNKS = 12
+            # Uniform Sampling — keep under Groq free-tier TPM (6000 tokens/min)
+            MAX_CHUNKS = settings.SUMMARIZER_MAX_CHUNKS
             if len(chunks) > MAX_CHUNKS:
                 step = len(chunks) / MAX_CHUNKS
                 chunks = [chunks[int(i * step)] for i in range(MAX_CHUNKS)]
-            
+
+            MAX_CHARS_PER_CHUNK = 300
             full_transcript = []
             for c in chunks:
                 raw_text = c["content"].split("\n\n")[-1] if "\n\n" in c["content"] else c["content"]
+                raw_text = raw_text[:MAX_CHARS_PER_CHUNK]
                 ts = format_timestamp(c['start_time'])
                 full_transcript.append(f"[{ts}] {raw_text}")
                 
@@ -171,11 +175,11 @@ Yêu cầu:
 3. Kết luận.
 Hãy viết văn phong chuyên nghiệp, dễ hiểu.
 """
-            # Gọi streaming
+            # Gọi streaming — max_tokens 1500 để tránh vượt 6000 TPM Groq free tier
             for chunk in self.llm.chat_complete_stream(
                 prompt=prompt,
                 system="Bạn là một chuyên gia phân tích dữ liệu video. Hãy tóm tắt thật hay và đầy đủ.",
-                max_tokens=4000,
+                max_tokens=1500,
                 temperature=0.3
             ):
                 yield chunk

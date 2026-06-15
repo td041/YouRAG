@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     GROQ_API_KEYS: str = ""  # Danh sách key dự phòng, cách nhau bởi dấu phẩy: "key1,key2,key3"
     MISTRAL_EVAL_API_KEY: Optional[SecretStr] = None  # RAGAS benchmark evaluator (no daily quota)
     JINA_API_KEY: Optional[SecretStr] = None  # Late Chunking (jina-embeddings-v3)
+    GEMINI_API_KEY: Optional[SecretStr] = None  # Visual Frame RAG (Gemini 1.5 Flash vision)
 
     # 3. Vector Database Engine (QDRANT VƯƠNG GIẢ)
     QDRANT_DB_PATH: str = "qdrant_db"

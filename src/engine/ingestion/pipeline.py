@@ -124,9 +124,11 @@ class IngestionPipeline:
         self,
         use_contextual_enrichment: bool = False,
         use_late_chunking: bool = False,
+        use_visual_rag: bool = False,
     ):
         self.use_contextual_enrichment = use_contextual_enrichment
         self.use_late_chunking = use_late_chunking
+        self.use_visual_rag = use_visual_rag
 
     def run(self, youtube_url: str, force_reingest: bool = False) -> Dict:
         import time
@@ -159,18 +161,39 @@ class IngestionPipeline:
         result = _run_save_to_qdrant(raw_data, final_chunks, precomputed_embeddings)
         t5 = time.time()
 
+        # Visual Frame RAG — chạy sau khi text chunks đã được upsert
+        visual_chunks_added = 0
+        if self.use_visual_rag:
+            try:
+                from src.engine.ingestion.frame_extractor import VisualRAGPipeline
+                visual_pipeline = VisualRAGPipeline(interval_seconds=60, max_workers=2)
+                visual_chunks_added = visual_pipeline.run(
+                    video_url=youtube_url,
+                    metadata=raw_data["metadata"],
+                    collection_name=result["collection_name"],
+                    chunk_index_start=len(final_chunks),
+                )
+            except Exception as e:
+                logger.error(f"[VisualRAG] Failed (non-critical): {e}")
+        t6 = time.time()
+
         result["late_chunking_used"] = precomputed_embeddings is not None
+        result["visual_rag_used"] = self.use_visual_rag
+        result["visual_chunks_added"] = visual_chunks_added
+        result["chunks_added"] += visual_chunks_added
         result["latency"] = {
             "extract_s": round(t1 - t0, 2),
             "chunk_s": round(t2 - t1, 2),
             "graph_s": round(t3 - t2, 2),
             "embed_s": round(t4 - t3, 2),
             "load_s": round(t5 - t4, 2),
-            "total_s": round(t5 - t0, 2),
+            "visual_s": round(t6 - t5, 2),
+            "total_s": round(t6 - t0, 2),
         }
 
         logger.info(
             f"✅ INGESTION COMPLETED in {result['latency']['total_s']}s — "
-            f"{result['chunks_added']} chunks → [{result['collection_name']}]"
+            f"{result['chunks_added']} chunks ({visual_chunks_added} visual) "
+            f"→ [{result['collection_name']}]"
         )
         return result
