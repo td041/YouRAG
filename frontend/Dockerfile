@@ -4,6 +4,11 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci
 COPY . .
+# NEXT_PUBLIC_* vars must be baked in at build time — pass via --build-arg
+ARG NEXT_PUBLIC_API_URL=/api/backend
+ARG NEXT_PUBLIC_API_KEY=
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+ENV NEXT_PUBLIC_API_KEY=$NEXT_PUBLIC_API_KEY
 RUN npm run build
 
 # ── Stage 2: Runner ──────────────────────────────────────────────

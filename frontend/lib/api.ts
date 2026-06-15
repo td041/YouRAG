@@ -15,13 +15,19 @@ export async function ingestVideo(
   url: string,
   useContextual: boolean,
   useLateChunking = false,
+  useVisualRag = false,
   onProgress?: (status: string) => void,
 ) {
   // Kick off async job
   const r = await fetch(`${BASE}/ingest`, {
     method: "POST",
     headers: authHeaders({ "Content-Type": "application/json" }),
-    body: JSON.stringify({ url, use_contextual: useContextual, use_late_chunking: useLateChunking }),
+    body: JSON.stringify({
+      url,
+      use_contextual: useContextual,
+      use_late_chunking: useLateChunking,
+      use_visual_rag: useVisualRag,
+    }),
   });
   if (!r.ok) throw new Error(await r.text());
   const { job_id } = await r.json();
@@ -44,6 +50,12 @@ export async function deleteCollection(name: string) {
   return r.json();
 }
 
+export async function fetchBenchmarkReport() {
+  const r = await fetch(`${BASE}/benchmark/report`, { cache: "no-store", headers: authHeaders() });
+  if (!r.ok) return null;
+  return r.json();
+}
+
 export async function fetchSuggestions(collection: string): Promise<string[]> {
   const r = await fetch(`${BASE}/suggestions/${encodeURIComponent(collection)}`, {
     headers: authHeaders(),
@@ -56,10 +68,10 @@ export async function fetchSuggestions(collection: string): Promise<string[]> {
 
 export function streamChat(
   query: string,
-  collection: string,
+  collections: string[],
   sessionId: string | undefined,
   onChunk: (text: string) => void,
-  onSources: (sources: string[]) => void,
+  onSources: (sources: unknown[]) => void,
   onSuggestions: (suggestions: string[]) => void,
   onSessionId: (id: string) => void,
   onDone: () => void,
@@ -70,7 +82,7 @@ export function streamChat(
   fetch(`${BASE}/chat/stream`, {
     method: "POST",
     headers: authHeaders({ "Content-Type": "application/json" }),
-    body: JSON.stringify({ query, collection, session_id: sessionId }),
+    body: JSON.stringify({ query, collections, session_id: sessionId }),
     signal: ctrl.signal,
   })
     .then(async (r) => {
