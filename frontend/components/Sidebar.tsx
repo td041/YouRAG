@@ -5,7 +5,7 @@ import { Collection } from "@/lib/types";
 import { ingestVideo, deleteCollection } from "@/lib/api";
 import {
   Plus, Library, Loader2, CheckCircle2,
-  XCircle, Trash2, Search, Sparkles, Globe, X
+  XCircle, Trash2, Search, Sparkles, Globe, X, Check, Eye
 } from "lucide-react";
 
 function YouTubeLogo({ size = 20 }: { size?: number }) {
@@ -31,18 +31,20 @@ function stepIndex(s: IngestStatus) {
 
 interface Props {
   collections: Collection[];
-  selected: Collection | null;
+  selectedCollections: Collection[];
   apiOnline: boolean;
+  loadingCollections: boolean;
   theme: "dark" | "light";
-  onSelect: (c: Collection) => void;
+  onToggleSelect: (c: Collection) => void;
   onIngested: () => void;
   onDeleted: (name: string) => void;
   onClose: () => void;
 }
 
-export default function Sidebar({ collections, selected, apiOnline, theme, onSelect, onIngested, onDeleted, onClose }: Props) {
+export default function Sidebar({ collections, selectedCollections, apiOnline, loadingCollections, theme, onToggleSelect, onIngested, onDeleted, onClose }: Props) {
   const [url, setUrl] = useState("");
   const [useCtx, setUseCtx] = useState(false);
+  const [useVisual, setUseVisual] = useState(false);
   const [status, setStatus] = useState<IngestStatus>("idle");
   const [statusMsg, setStatusMsg] = useState("");
   const [deletingName, setDeletingName] = useState<string | null>(null);
@@ -71,7 +73,7 @@ export default function Sidebar({ collections, selected, apiOnline, theme, onSel
     setStatusMsg("");
     setChunks(null);
     try {
-      const d = await ingestVideo(url.trim(), useCtx, false, (s) => {
+      const d = await ingestVideo(url.trim(), useCtx, false, useVisual, (s) => {
         if (s === "running") setStatus("running");
       });
       setStatus("ok");
@@ -173,6 +175,23 @@ export default function Sidebar({ collections, selected, apiOnline, theme, onSel
               </div>
             </div>
 
+            <div
+              onClick={() => setUseVisual(v => !v)}
+              className="flex items-center justify-between px-1 py-1 cursor-pointer select-none"
+              title="Index video frames + describe with AI vision — cần GEMINI_API_KEY hoặc OPENAI_API_KEY"
+            >
+              <div className="flex items-center gap-2">
+                <Eye size={12} className={useVisual ? "text-violet-400" : ""} style={!useVisual ? { color: textDim } : {}} />
+                <span className="text-[11px] font-medium transition-colors" style={{ color: useVisual ? textMuted : textDim }}>
+                  Visual Frame RAG
+                </span>
+              </div>
+              <div className={`w-7 h-4 rounded-full transition-all relative ${useVisual ? "bg-violet-500 shadow-[0_0_10px_rgba(139,92,246,0.3)]" : ""}`}
+                   style={!useVisual ? { background: isDark ? "#1e293b" : "#cbd5e1" } : {}}>
+                <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all ${useVisual ? "left-[14px]" : "left-0.5"}`} />
+              </div>
+            </div>
+
             <button
               type="submit" disabled={isIngesting || !url.trim()}
               className="w-full h-10 accent-gradient text-white text-[13px] font-bold rounded-xl shadow-lg shadow-indigo-500/10 active:scale-95 transition-all disabled:opacity-30 disabled:grayscale disabled:cursor-not-allowed flex items-center justify-center gap-2"
@@ -227,71 +246,89 @@ export default function Sidebar({ collections, selected, apiOnline, theme, onSel
             <Library size={14} />
             <span className="text-[11px] font-bold uppercase tracking-widest">Library</span>
           </div>
-          {collections.length > 0 && (
-            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: cardBg, border: `1px solid ${borderColor}`, color: textDim }}>
-              {collections.length}
-            </span>
-          )}
+          <div className="flex items-center gap-1.5">
+            {selectedCollections.length > 0 && (
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-400 border border-indigo-500/30">
+                {selectedCollections.length} selected
+              </span>
+            )}
+            {collections.length > 0 && (
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: cardBg, border: `1px solid ${borderColor}`, color: textDim }}>
+                {collections.length}
+              </span>
+            )}
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto custom-scrollbar px-2 space-y-1 pb-2">
-          {collections.length === 0 ? (
+          {loadingCollections && collections.length === 0 ? (
+            <div className="flex items-center justify-center py-10">
+              <Loader2 size={22} className="animate-spin" style={{ color: textDim }} />
+            </div>
+          ) : collections.length === 0 ? (
             <div className="px-4 py-8 text-center">
               <Globe size={32} className="mx-auto mb-3" style={{ color: textDim }} />
               <p className="text-[12px]" style={{ color: textDim }}>Your video library is empty</p>
             </div>
           ) : (
-            collections.map(c => (
-              <button
-                key={c.name}
-                onClick={() => onSelect(c)}
-                className="w-full group flex flex-col gap-2 p-3 rounded-2xl transition-all duration-300 border"
-                style={{
-                  background: selected?.name === c.name ? selectedItemBg : "transparent",
-                  borderColor: selected?.name === c.name ? selectedItemBorder : "transparent",
-                  boxShadow: selected?.name === c.name ? "0 4px 20px rgba(0,0,0,0.2)" : "none",
-                }}
-              >
-                <div className="flex items-center gap-3 w-full">
-                  <div className="w-10 h-10 rounded-xl overflow-hidden shrink-0 relative transition-all"
-                       style={{ background: isDark ? "#0f172a" : "#e2e8f0", border: `1px solid ${borderColor}` }}>
-                    {c.video_id ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={`https://i.ytimg.com/vi/${c.video_id}/default.jpg`}
-                        alt=""
-                        className={`w-full h-full object-cover transition-transform duration-500 ${selected?.name === c.name ? "scale-110" : "group-hover:scale-110"}`}
-                      />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center">
-                        <Library size={14} style={{ color: textDim }} />
-                      </div>
-                    )}
-                    {selected?.name === c.name && (
-                      <div className="absolute inset-0 bg-indigo-500/20 backdrop-blur-[1px]" />
-                    )}
+            collections.map(c => {
+              const isSelected = selectedCollections.some(s => s.name === c.name);
+              return (
+                <button
+                  key={c.name}
+                  onClick={() => onToggleSelect(c)}
+                  className="w-full group flex flex-col gap-2 p-3 rounded-2xl transition-all duration-300 border"
+                  style={{
+                    background: isSelected ? selectedItemBg : "transparent",
+                    borderColor: isSelected ? selectedItemBorder : "transparent",
+                    boxShadow: isSelected ? "0 4px 20px rgba(0,0,0,0.2)" : "none",
+                  }}
+                >
+                  <div className="flex items-center gap-3 w-full">
+                    <div className="w-10 h-10 rounded-xl overflow-hidden shrink-0 relative transition-all"
+                         style={{ background: isDark ? "#0f172a" : "#e2e8f0", border: `1px solid ${borderColor}` }}>
+                      {c.video_id ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={`https://i.ytimg.com/vi/${c.video_id}/default.jpg`}
+                          alt=""
+                          className={`w-full h-full object-cover transition-transform duration-500 ${isSelected ? "scale-110" : "group-hover:scale-110"}`}
+                        />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center">
+                          <Library size={14} style={{ color: textDim }} />
+                        </div>
+                      )}
+                      {isSelected && (
+                        <div className="absolute inset-0 bg-indigo-500/20 backdrop-blur-[1px] flex items-center justify-center">
+                          <Check size={14} className="text-indigo-300" />
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex-1 min-w-0 text-left">
+                      <p className="text-[12.5px] font-semibold leading-snug truncate transition-colors"
+                         style={{ color: isSelected ? textMain : textMuted }}>
+                        {c.title}
+                      </p>
+                      <p className="text-[10px] mt-0.5 truncate" style={{ color: textDim }}>
+                        {isSelected ? "In chat context" : "Source: YouTube"}
+                      </p>
+                    </div>
+                    <button
+                      onClick={(e) => handleDelete(e, c.name)}
+                      disabled={deletingName === c.name}
+                      className="shrink-0 opacity-0 group-hover:opacity-100 p-1.5 rounded-lg hover:bg-rose-500/10 transition-all"
+                      style={{ color: textDim }}
+                      title="Delete video"
+                    >
+                      {deletingName === c.name
+                        ? <Loader2 size={13} className="animate-spin" />
+                        : <Trash2 size={13} className="hover:text-rose-400" />}
+                    </button>
                   </div>
-                  <div className="flex-1 min-w-0 text-left">
-                    <p className="text-[12.5px] font-semibold leading-snug truncate transition-colors"
-                       style={{ color: selected?.name === c.name ? textMain : textMuted }}>
-                      {c.title}
-                    </p>
-                    <p className="text-[10px] mt-0.5 truncate" style={{ color: textDim }}>Source: YouTube</p>
-                  </div>
-                  <button
-                    onClick={(e) => handleDelete(e, c.name)}
-                    disabled={deletingName === c.name}
-                    className="shrink-0 opacity-0 group-hover:opacity-100 p-1.5 rounded-lg hover:bg-rose-500/10 transition-all"
-                    style={{ color: textDim }}
-                    title="Delete video"
-                  >
-                    {deletingName === c.name
-                      ? <Loader2 size={13} className="animate-spin" />
-                      : <Trash2 size={13} className="hover:text-rose-400" />}
-                  </button>
-                </div>
-              </button>
-            ))
+                </button>
+              );
+            })
           )}
         </div>
       </div>

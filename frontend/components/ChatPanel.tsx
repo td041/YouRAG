@@ -4,17 +4,18 @@ import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
-import { Message, Collection } from "@/lib/types";
+import { Message, Collection, Source } from "@/lib/types";
 import { streamChat, fetchSuggestions } from "@/lib/api";
 import {
   Send, Trash2, Layers, Zap,
-  Cpu, Sparkles, User, Bot, Clock, Loader2, ExternalLink, Search
+  Cpu, Sparkles, User, Bot, Clock, Loader2, ExternalLink, Search, Eye
 } from "lucide-react";
 
 interface Props {
-  collection: Collection | null;
+  collections: Collection[];
+  activeVideo: Collection | null;
   theme: "dark" | "light";
-  onSourceClick?: (time: number) => void;
+  onSourceClick?: (time: number, videoId?: string) => void;
 }
 
 let idCounter = 0;
@@ -36,12 +37,14 @@ function superscriptNumber(n: number): string {
 }
 
 function MessageContent({ content, onSourceClick }: { content: string; onSourceClick?: (t: number) => void }) {
+  // Match [mm:ss] or [mm:ss - mm:ss] (range) — capture only the start time
+  const TS_RE = /\[(\d{1,2}:\d{2})(?:\s*[-–]\s*\d{1,2}:\d{2})?\]/g;
+
   // Pre-compute timestamp footnotes in document order (stable indices across renders)
   const seenLabels: string[] = [];
   const footnoteMap = new Map<string, number>();
-  const tsRegex = /\[(\d{1,2}:\d{2})\]/g;
   let m: RegExpExecArray | null;
-  while ((m = tsRegex.exec(content)) !== null) {
+  while ((m = TS_RE.exec(content)) !== null) {
     const label = m[1];
     if (!footnoteMap.has(label)) {
       footnoteMap.set(label, seenLabels.length);
@@ -49,8 +52,8 @@ function MessageContent({ content, onSourceClick }: { content: string; onSourceC
     }
   }
 
-  // Replace [mm:ss] with a safe HTML tag that rehype-raw will pass through
-  const processed = content.replace(/\[(\d{1,2}:\d{2})\]/g, '<ts data-ts="$1"></ts>');
+  // Replace timestamp patterns with a safe HTML tag that rehype-raw will pass through
+  const processed = content.replace(TS_RE, '<ts data-ts="$1"></ts>');
 
   return (
     <div className="prose prose-sm max-w-none leading-relaxed
@@ -96,7 +99,8 @@ function MessageContent({ content, onSourceClick }: { content: string; onSourceC
   );
 }
 
-export default function ChatPanel({ collection, theme, onSourceClick }: Props) {
+export default function ChatPanel({ collections, activeVideo, theme, onSourceClick }: Props) {
+  const collection = collections[0] ?? null;
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
@@ -119,6 +123,8 @@ export default function ChatPanel({ collection, theme, onSourceClick }: Props) {
   const inputBg = isDark ? "#0d1117" : "#ffffff";
   const chipBg = isDark ? "rgba(255,255,255,0.03)" : "rgba(0,0,0,0.03)";
 
+  const collectionsKey = collections.map(c => c.name).join(",");
+
   useEffect(() => {
     setMessages([]);
     setInput("");
@@ -132,7 +138,8 @@ export default function ChatPanel({ collection, theme, onSourceClick }: Props) {
     fetchSuggestions(collection.name)
       .then(s => setWelcomeSuggestions(s))
       .finally(() => setLoadingSuggestions(false));
-  }, [collection?.name]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [collectionsKey]);
 
   useEffect(() => {
     const el = scrollContainerRef.current;
@@ -147,7 +154,7 @@ export default function ChatPanel({ collection, theme, onSourceClick }: Props) {
 
   function handleSend(overrideQuery?: string) {
     const query = overrideQuery || input.trim();
-    if (!query || !collection || streaming) return;
+    if (!query || collections.length === 0 || streaming) return;
 
     setInput("");
     if (textareaRef.current) textareaRef.current.style.height = "auto";
@@ -161,12 +168,19 @@ export default function ChatPanel({ collection, theme, onSourceClick }: Props) {
 
     abortRef.current = streamChat(
       query,
-      collection.name,
+      collections.map(c => c.name),
       sessionId,
       (chunk) => setMessages(prev =>
         prev.map(m => m.id === botId ? { ...m, content: m.content + chunk } : m)),
-      (sources) => setMessages(prev =>
-        prev.map(m => m.id === botId ? { ...m, sources } : m)),
+      (rawSources) => {
+        const sources: Source[] = rawSources.map((s) => {
+          if (typeof s === "string") {
+            return { label: s, start_time: parseTimeToSeconds(s.split("–")[0].trim()), video_id: null, title: null };
+          }
+          return s as Source;
+        });
+        setMessages(prev => prev.map(m => m.id === botId ? { ...m, sources } : m));
+      },
       (suggestions) => setMessages(prev =>
         prev.map(m => m.id === botId ? { ...m, suggestions } : m)),
       (id) => setSessionId(id),
@@ -183,10 +197,10 @@ export default function ChatPanel({ collection, theme, onSourceClick }: Props) {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); }
   }
 
-  function openInYouTube(timeStr: string) {
-    if (!collection?.video_id) return;
-    const sec = parseTimeToSeconds(timeStr.split("–")[0].trim());
-    window.open(`https://youtube.com/watch?v=${collection.video_id}&t=${Math.floor(sec)}s`, "_blank", "noopener");
+  function openInYouTube(src: Source) {
+    const vid = src.video_id ?? activeVideo?.video_id;
+    if (!vid) return;
+    window.open(`https://youtube.com/watch?v=${vid}&t=${Math.floor(src.start_time)}s`, "_blank", "noopener");
   }
 
   return (
@@ -234,15 +248,17 @@ export default function ChatPanel({ collection, theme, onSourceClick }: Props) {
               </div>
 
               <h2 className="text-xl sm:text-2xl font-bold font-display mb-3 tracking-tight" style={{ color: textMain }}>
-                {collection ? "How can I help you today?" : "Select a video to begin"}
+                {collections.length > 0 ? "How can I help you today?" : "Select a video to begin"}
               </h2>
               <p className="text-[14px] max-w-sm leading-relaxed mb-8" style={{ color: textDim }}>
-                {collection
-                  ? `Ask me anything about "${collection.title}".`
+                {collections.length > 1
+                  ? `Searching across ${collections.length} videos simultaneously.`
+                  : collections.length === 1
+                  ? `Ask me anything about "${collections[0].title}".`
                   : "Connect a YouTube video from your library to start an intelligent conversation."}
               </p>
 
-              {collection && (
+              {collections.length > 0 && (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full max-w-md">
                   {loadingSuggestions ? (
                     Array.from({ length: 4 }).map((_, i) => (
@@ -329,21 +345,34 @@ export default function ChatPanel({ collection, theme, onSourceClick }: Props) {
                            style={{ background: chipBg, border: `1px solid ${msgBotBorder}`, color: textDim }}>
                         <Clock size={10} /> Sources
                       </div>
-                      {msg.sources.map((s, si) => {
-                        const timePart = s.split("–")[0].trim();
-                        const seconds = parseTimeToSeconds(timePart);
+                      {msg.sources.map((src, si) => {
+                        const hasVideo = !!(src.video_id ?? activeVideo?.video_id);
+                        const isVisual = src.chunk_type === "visual";
+                        const borderCol = isVisual
+                          ? "rgba(139,92,246,0.25)"
+                          : "rgba(99,102,241,0.15)";
+                        const btnClass = isVisual
+                          ? "px-3 py-1 bg-violet-500/5 hover:bg-violet-500/10 text-[11px] font-mono text-violet-400 transition-all"
+                          : "px-3 py-1 bg-indigo-500/5 hover:bg-indigo-500/10 text-[11px] font-mono text-indigo-400 transition-all";
                         return (
-                          <div key={si} className="flex items-center rounded-full overflow-hidden" style={{ border: "1px solid rgba(99,102,241,0.15)" }}>
+                          <div key={si} className="flex items-center rounded-full overflow-hidden" style={{ border: `1px solid ${borderCol}` }}>
+                            {isVisual && (
+                              <span className="pl-2 pr-1 flex items-center" title="Visual frame source">
+                                <Eye size={9} className="text-violet-400/70" />
+                              </span>
+                            )}
                             <button
-                              onClick={() => onSourceClick?.(seconds)}
-                              className="px-3 py-1 bg-indigo-500/5 hover:bg-indigo-500/10 text-[11px] font-mono text-indigo-400 transition-all"
-                              title={`Seek to ${timePart}`}
+                              onClick={() => onSourceClick?.(src.start_time, src.video_id ?? undefined)}
+                              className={btnClass}
+                              title={`Seek to ${src.label}${isVisual ? " (visual frame)" : ""}${src.title ? ` — ${src.title}` : ""}`}
                             >
-                              {s}
+                              {collections.length > 1 && src.title
+                                ? `${src.title.slice(0, 15)}… ${src.label}`
+                                : src.label}
                             </button>
-                            {collection?.video_id && (
+                            {hasVideo && (
                               <button
-                                onClick={() => openInYouTube(s)}
+                                onClick={() => openInYouTube(src)}
                                 className="px-2 py-1 bg-indigo-500/5 hover:bg-indigo-500/15 border-l border-indigo-500/15 text-indigo-400/60 hover:text-indigo-400 transition-all"
                                 title="Open in YouTube"
                               >
@@ -386,7 +415,7 @@ export default function ChatPanel({ collection, theme, onSourceClick }: Props) {
           <div className={`absolute inset-0 bg-indigo-500/5 rounded-3xl blur-2xl transition-opacity duration-500 ${input.trim() ? "opacity-100" : "opacity-0"}`} />
 
           <div className={`relative flex flex-col rounded-[2rem] p-2 transition-all duration-300 ${
-            collection ? "focus-within:shadow-[0_0_30px_rgba(99,102,241,0.1)] focus-within:ring-4 focus-within:ring-indigo-500/5" : "opacity-40 grayscale pointer-events-none"
+            collections.length > 0 ? "focus-within:shadow-[0_0_30px_rgba(99,102,241,0.1)] focus-within:ring-4 focus-within:ring-indigo-500/5" : "opacity-40 grayscale pointer-events-none"
           }`}
             style={{
               background: inputBg,
@@ -401,7 +430,7 @@ export default function ChatPanel({ collection, theme, onSourceClick }: Props) {
                 e.target.style.height = Math.min(e.target.scrollHeight, 200) + "px";
               }}
               onKeyDown={handleKey}
-              placeholder={collection ? "Send a message..." : "Select a video to begin"}
+              placeholder={collections.length > 0 ? "Send a message..." : "Select a video to begin"}
               className="w-full bg-transparent px-4 sm:px-5 py-4 text-[14px] sm:text-[14.5px] outline-none resize-none min-h-[56px] max-h-48 leading-relaxed scrollbar-none placeholder-slate-600"
               style={{ color: textMain }}
               rows={1}
@@ -416,7 +445,7 @@ export default function ChatPanel({ collection, theme, onSourceClick }: Props) {
 
               <button
                 onClick={() => handleSend()}
-                disabled={!collection || !input.trim() || streaming}
+                disabled={collections.length === 0 || !input.trim() || streaming}
                 className={`w-10 h-10 rounded-2xl flex items-center justify-center transition-all ${
                   input.trim() && !streaming
                     ? "accent-gradient text-white shadow-lg shadow-indigo-500/20 active:scale-90"

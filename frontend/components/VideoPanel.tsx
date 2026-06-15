@@ -19,11 +19,11 @@ function YouTubeLogo({ size = 16 }: { size?: number }) {
 
 interface Props {
   collection: Collection | null;
-  seekTime?: number;
+  seek?: { time: number; seq: number };
   theme: "dark" | "light";
 }
 
-export default function VideoPanel({ collection, seekTime, theme }: Props) {
+export default function VideoPanel({ collection, seek, theme }: Props) {
   const [summary, setSummary] = useState("");
   const [streaming, setStreaming] = useState(false);
 
@@ -83,8 +83,8 @@ export default function VideoPanel({ collection, seekTime, theme }: Props) {
               <div className="relative w-full rounded-2xl overflow-hidden border shadow-2xl"
                    style={{ aspectRatio: "16/9", borderColor: cardBorder, background: "#000" }}>
                 <iframe
-                  key={seekTime !== undefined ? `seek-${seekTime}` : `vid-${collection.video_id}`}
-                  src={`https://www.youtube.com/embed/${collection.video_id}?rel=0&modestbranding=1&autoplay=${seekTime !== undefined ? 1 : 0}${seekTime !== undefined ? `&start=${Math.floor(seekTime)}` : ""}`}
+                  key={seek ? `seek-${seek.seq}-${seek.time}` : `vid-${collection.video_id}`}
+                  src={`https://www.youtube.com/embed/${collection.video_id}?rel=0&modestbranding=1&autoplay=${seek ? 1 : 0}${seek ? `&start=${Math.floor(seek.time)}` : ""}`}
                   title={collection.title}
                   allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                   allowFullScreen
