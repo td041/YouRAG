@@ -132,6 +132,15 @@ export function streamChat(
   return () => ctrl.abort();
 }
 
+export async function fetchQuiz(collection: string, count = 5, mode: "quiz" | "flashcard" = "quiz") {
+  const r = await fetch(
+    `${BASE}/quiz/${encodeURIComponent(collection)}?count=${count}&mode=${mode}`,
+    { cache: "no-store", headers: authHeaders() },
+  );
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
 export function streamSummary(
   collection: string,
   onChunk: (text: string) => void,
