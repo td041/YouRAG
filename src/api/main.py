@@ -798,6 +798,160 @@ async def get_suggestions(request: Request, collection: str, _: str = Depends(re
         return {"suggestions": []}
 
 
+@app.get("/quiz/{collection}")
+@limiter.limit("10/minute")
+async def generate_quiz(
+    request: Request,
+    collection: str,
+    count: int = 5,
+    mode: str = "quiz",
+    _: str = Depends(require_api_key),
+):
+    """Generate quiz questions or flashcards from a video collection."""
+    import json as _json
+    try:
+        records, _ = db_instance.client.scroll(
+            collection_name=collection,
+            limit=500,
+            with_payload=True,
+            with_vectors=False,
+        )
+        if not records:
+            raise HTTPException(status_code=404, detail="Collection not found or empty")
+
+        import re as _re  # noqa: PLC0415
+        all_chunks = sorted(
+            [{"text": r.payload.get("text", ""), "start_time": r.payload.get("start_time", 0.0)}
+             for r in records if r.payload and r.payload.get("text")],
+            key=lambda x: x["start_time"],
+        )
+
+        # Ưu tiên chunks có nhiều nội dung thực chất (số liệu, tên cụ thể, thông số)
+        def chunk_score(c: dict) -> float:
+            t = c["text"]
+            score = len(t)  # base: length
+            score += len(_re.findall(r'\d+', t)) * 30          # bonus: numbers
+            score += len(_re.findall(r'[A-Z]{2,}', t)) * 20   # bonus: acronyms/model names
+            score -= 50 if len(t) < 80 else 0                 # penalty: too short
+            return score
+
+        chunks = sorted(all_chunks, key=chunk_score, reverse=True)
+
+        MAX_CHARS = 400
+        MAX_CHUNKS = 25
+        # Take top scored chunks, then re-sort by time for coherent transcript
+        sampled = sorted(chunks[:MAX_CHUNKS], key=lambda x: x["start_time"])
+
+        from src.core.utils import format_timestamp
+        transcript = "\n".join(
+            f"[{format_timestamp(c['start_time'])}] {c['text'][:MAX_CHARS]}"
+            for c in sampled
+        )
+
+        count = max(3, min(count, 10))
+
+        if mode == "flashcard":
+            prompt = f"""Dựa trên transcript video sau, tạo tối đa {count} flashcard học tập.
+
+QUAN TRỌNG:
+- Chỉ tạo flashcard từ những đoạn có THÔNG TIN CỤ THỂ: số liệu, thông số kỹ thuật, tên sản phẩm, so sánh rõ ràng.
+- KHÔNG tạo flashcard từ câu chuyện phiếm, cảm nhận mơ hồ, hay câu giới thiệu.
+- Nếu một đoạn transcript không có fact cụ thể → bỏ qua, đừng cố tạo card từ đó.
+- Trả về ÍT card hơn {count} nếu không đủ nội dung chất lượng. Đừng bịa.
+
+<transcript>
+{transcript}
+</transcript>
+
+Trả về JSON hợp lệ (không có markdown):
+{{
+  "cards": [
+    {{
+      "front": "Câu hỏi về một fact cụ thể (tên, số, thông số...)",
+      "back": "Câu trả lời rõ ràng, chính xác, trích từ transcript",
+      "timestamp": "X:XX"
+    }}
+  ]
+}}
+
+QUAN TRỌNG VỀ timestamp: Dùng ĐÚNG timestamp [X:XX] từ dòng transcript chứa thông tin đó. KHÔNG dùng "0:00" hay "0:01" mặc định.
+Ví dụ front tốt: "Pin Nova thường dung lượng bao nhiêu?" → back: "4000mAh", timestamp: "2:16"
+Ví dụ front xấu (KHÔNG làm): "Bàn phím này trông như thế nào?" → back mơ hồ"""
+        else:
+            prompt = f"""Dựa trên transcript video sau, tạo {count} câu hỏi trắc nghiệm.
+
+QUAN TRỌNG: Chỉ hỏi về thông tin CÓ TRONG transcript. Đáp án đúng phải được nêu rõ trong transcript. Không bịa đặt con số hay sự kiện.
+
+<transcript>
+{transcript}
+</transcript>
+
+Trả về JSON hợp lệ (không có markdown), đúng format:
+{{
+  "questions": [
+    {{
+      "question": "Câu hỏi rõ ràng, cụ thể",
+      "options": ["Đáp án A", "Đáp án B", "Đáp án C", "Đáp án D"],
+      "correct": 0,
+      "explanation": "Trích dẫn nguyên văn từ transcript để chứng minh đáp án đúng",
+      "timestamp": "X:XX"
+    }}
+  ]
+}}
+
+QUAN TRỌNG VỀ timestamp: Dùng ĐÚNG timestamp [X:XX] từ dòng transcript chứa thông tin đó. KHÔNG dùng "0:00" hay "0:01" mặc định.
+Quy tắc: correct là index 0-3, options đủ 4 lựa chọn, explanation phải trích dẫn nội dung transcript."""
+
+        system_msg = (
+            "Bạn là chuyên gia tạo câu hỏi học tập. "
+            "Chỉ tạo câu hỏi dựa trên nội dung được cung cấp, không bịa đặt. "
+            "Chỉ trả về JSON thuần, KHÔNG markdown, KHÔNG giải thích thêm."
+        )
+
+        def _call_llm() -> dict:
+            raw = AIStore.generator.llm.chat_complete(
+                prompt=prompt, system=system_msg, max_tokens=2000, temperature=0.4,
+            )
+            raw = raw.strip()
+            match = _re.search(r'\{.*\}', raw, _re.DOTALL)
+            if not match:
+                raise ValueError(f"No JSON object in response: {raw[:200]}")
+            return _json.loads(match.group(0))
+
+        def _ts_to_seconds(ts: str) -> float:
+            """Parse 'mm:ss' or 'h:mm:ss' string to seconds."""
+            try:
+                parts = [int(p) for p in ts.strip().split(":")]
+                if len(parts) == 2:
+                    return parts[0] * 60 + parts[1]
+                if len(parts) == 3:
+                    return parts[0] * 3600 + parts[1] * 60 + parts[2]
+            except Exception:
+                pass
+            return 0.0
+
+        def _inject_start_times(data: dict) -> dict:
+            """Compute start_time from timestamp string so LLM can't get it wrong."""
+            for item in data.get("cards", []) + data.get("questions", []):
+                item["start_time"] = _ts_to_seconds(item.get("timestamp", "0:00"))
+            return data
+
+        # Retry up to 2 times if LLM returns malformed JSON
+        for attempt in range(2):
+            try:
+                data = _inject_start_times(_call_llm())
+                return {"mode": mode, "collection": collection, **data}
+            except (_json.JSONDecodeError, ValueError) as e:
+                logger.warning(f"[quiz] attempt {attempt + 1} failed: {e}")
+
+        raise HTTPException(status_code=500, detail="LLM returned invalid JSON — try again")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[quiz] {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/summarize/{collection}")
 @limiter.limit("10/minute")
 async def get_summary(request: Request, collection: str, _: str = Depends(require_api_key)):
