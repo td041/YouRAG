@@ -86,10 +86,11 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 if _prometheus_available:
     Instrumentator().instrument(app).expose(app)
 
+_ALLOWED_ORIGINS = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:3001").split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=_ALLOWED_ORIGINS,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -497,7 +498,7 @@ async def chat_rag(request: Request, req: ChatRequest, _: str = Depends(require_
         chat_history_str = history_mgr.format_for_prompt()
 
         # --- CHECK SEMANTIC CACHE ---
-        cached_data = AIStore.cache.check_cache(req.query, collection_name=req.collection)
+        cached_data = AIStore.cache.check_cache(req.query, collection_name=req.collection) if AIStore.cache else None
         if cached_data:
             answer = cached_data["answer"]
             sources = cached_data["sources"]
@@ -523,7 +524,7 @@ async def chat_rag(request: Request, req: ChatRequest, _: str = Depends(require_
         # 2. Graph RAG Search (lấy graph_data thật)
         graph_data = (
             AIStore.graph_retriever.search(req.query, collection_name=req.collection)
-            if AIStore.graph_retriever else []
+            if AIStore.graph_retriever else {"facts": [], "graph_summary": ""}
         )
 
         # 3. Rerank
@@ -546,18 +547,19 @@ async def chat_rag(request: Request, req: ChatRequest, _: str = Depends(require_
 
         from src.core.utils import format_timestamp
         sources = [
-            f"{format_timestamp(c['metadata']['start_time'])}–{format_timestamp(c['metadata']['end_time'])}"
+            f"{format_timestamp(c.get('metadata', {}).get('start_time', 0.0))}–{format_timestamp(c.get('metadata', {}).get('end_time', 0.0))}"
             for c in final_chunks
         ]
 
         # --- SAVE TO CACHE ---
-        AIStore.cache.save_to_cache(
-            query=req.query,
-            answer=answer,
-            collection_name=req.collection,
-            sources=sources,
-            facts=graph_data.get("facts", [])
-        )
+        if AIStore.cache:
+            AIStore.cache.save_to_cache(
+                query=req.query,
+                answer=answer,
+                collection_name=req.collection,
+                sources=sources,
+                facts=graph_data.get("facts", [])
+            )
 
         # 6. Generate Suggested Questions
         sq_prompt = f"Dựa trên câu hỏi '{req.query}' và câu trả lời '{answer}', hãy gợi ý đúng 3 câu hỏi ngắn gọn (mỗi câu dưới 12 từ) mà người dùng có thể hỏi tiếp theo. Trả về định dạng: Câu 1|Câu 2|Câu 3. Không gạch đầu dòng, không đánh số."
@@ -601,7 +603,7 @@ async def chat_rag_stream(request: Request, req: ChatRequest, _: str = Depends(r
         chat_history_str = history_mgr.format_for_prompt()
 
         # --- CHECK SEMANTIC CACHE ---
-        cached_data = AIStore.cache.check_cache(req.query, collection_name=collections_list[0])
+        cached_data = AIStore.cache.check_cache(req.query, collection_name=collections_list[0]) if AIStore.cache else None
         if cached_data:
             def cached_generator():
                 answer = cached_data["answer"]
@@ -737,13 +739,14 @@ async def chat_rag_stream(request: Request, req: ChatRequest, _: str = Depends(r
             ]
 
             # --- SAVE TO CACHE ---
-            AIStore.cache.save_to_cache(
-                query=req.query,
-                answer=full_response,
-                collection_name=collections_list[0],
-                sources=sources,
-                facts=graph_data.get("facts", [])
-            )
+            if AIStore.cache:
+                AIStore.cache.save_to_cache(
+                    query=req.query,
+                    answer=full_response,
+                    collection_name=collections_list[0],
+                    sources=sources,
+                    facts=graph_data.get("facts", [])
+                )
 
             # Generate Suggested Questions — grounded in actual retrieved video chunks
             suggestions = []
