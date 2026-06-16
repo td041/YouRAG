@@ -112,11 +112,26 @@ class YouTubeLoader:
             logger.error(f"Không thể lấy Transcript của {video_id}. Nguyên nhân: {e}")
             return []
 
-    def _transcribe_with_whisper(self, url: str) -> List[Dict]:
+    @staticmethod
+    def _detect_language_hint(text: str) -> Optional[str]:
+        """Detect nếu text chứa ký tự đặc trưng tiếng Việt → trả về 'vi'.
+
+        Faster-whisper auto-detect thường nhầm tiếng Việt với Indonesian/Thai.
+        Kiểm tra dấu thanh điệu đặc trưng: ắ ặ ọ ứ ề ộ ... (≥3 ký tự → 'vi').
+        """
+        vi_chars = set(
+            "àáâãèéêìíòóôõùúýăđơư"
+            "ạảấầẩẫậắằẳẵặẹẻẽếềểễệỉịọỏốồổỗộớờởỡợụủứừửữựỳỷỹỵ"
+        )
+        count = sum(1 for c in text.lower() if c in vi_chars)
+        return "vi" if count >= 3 else None
+
+    def _transcribe_with_whisper(self, url: str, language_hint: Optional[str] = None) -> List[Dict]:
         """Fallback: tải audio và tự chuyển giọng nói → văn bản bằng faster-whisper (local).
 
         Dùng khi video không có phụ đề (CC) trên YouTube.
         Model 'base' (~145MB) tự download lần đầu, chạy được trên CPU và GPU.
+        language_hint: truyền 'vi' nếu detect được từ title/description để tránh nhầm ngôn ngữ.
         """
         try:
             from faster_whisper import WhisperModel  # lazy import
@@ -142,7 +157,13 @@ class YouTubeLoader:
             compute_type = "float16" if device == "cuda" else "int8"
 
             model = WhisperModel("base", device=device, compute_type=compute_type)
-            segments, info = model.transcribe(audio_path, beam_size=5)
+
+            transcribe_kwargs: Dict = {"beam_size": 5}
+            if language_hint:
+                transcribe_kwargs["language"] = language_hint
+                logger.info(f"🎙️ [Whisper] Language hint: '{language_hint}' (detected from metadata)")
+
+            segments, info = model.transcribe(audio_path, **transcribe_kwargs)
 
             logger.info(
                 f"🎙️ [Whisper] Ngôn ngữ phát hiện: {info.language} "
@@ -189,7 +210,13 @@ class YouTubeLoader:
                 f"⚠️ Video {video_id} không có phụ đề. Thử Whisper fallback..."
             )
             try:
-                raw_transcript = self._transcribe_with_whisper(url)
+                # Detect ngôn ngữ từ title/description để hint Whisper, tránh nhầm tiếng Việt
+                hint_text = " ".join(filter(None, [
+                    metadata.get("title", "") if metadata else "",
+                    metadata.get("description", "")[:200] if metadata else "",
+                ]))
+                lang_hint = self._detect_language_hint(hint_text)
+                raw_transcript = self._transcribe_with_whisper(url, language_hint=lang_hint)
             except Exception as whisper_err:
                 logger.error(f"❌ Whisper fallback thất bại: {whisper_err}")
                 raise ValueError(
