@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { Collection } from "@/lib/types";
 import { streamSummary } from "@/lib/api";
 import {
@@ -161,8 +163,13 @@ export default function VideoPanel({ collection, seek, theme }: Props) {
                     </div>
                     {streaming && <Loader2 size={14} className="animate-spin text-indigo-500" />}
                   </div>
-                  <div className="p-5 text-[14px] leading-relaxed whitespace-pre-wrap font-light" style={{ color: textMuted, background: cardBg }}>
-                    {summary || "Initializing synthesis engine..."}
+                  <div className="p-5 text-[14px] leading-relaxed font-light prose prose-sm max-w-none
+                    prose-p:my-1 prose-ul:my-1 prose-ol:my-1 prose-li:my-0
+                    prose-strong:font-semibold prose-headings:font-bold"
+                       style={{ color: textMuted, background: cardBg }}>
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                      {summary || "Initializing synthesis engine..."}
+                    </ReactMarkdown>
                     {streaming && (
                       <span className="inline-block w-1.5 h-4 bg-indigo-500 ml-1 rounded-sm blink align-middle" />
                     )}

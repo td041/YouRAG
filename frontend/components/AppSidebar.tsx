@@ -3,7 +3,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   MessageSquare, Library, BarChart2, Settings, Plus,
-  Loader2, Trash2, Check, Globe, Sun, Moon, X,
+  Loader2, Trash2, Check, Globe, Sun, Moon, X, GraduationCap,
 } from "lucide-react";
 import type { Collection } from "@/lib/types";
 import { deleteCollection } from "@/lib/api";
@@ -19,10 +19,11 @@ function YouTubeLogo({ size = 20 }: { size?: number }) {
 }
 
 const NAV_ITEMS = [
-  { href: "/chat",      icon: MessageSquare, label: "Chat" },
-  { href: "/library",   icon: Library,       label: "Library" },
-  { href: "/analytics", icon: BarChart2,     label: "Analytics" },
-  { href: "/settings",  icon: Settings,      label: "Settings" },
+  { href: "/chat",      icon: MessageSquare,  label: "Chat" },
+  { href: "/library",   icon: Library,        label: "Library" },
+  { href: "/learn",     icon: GraduationCap,  label: "Learn" },
+  { href: "/analytics", icon: BarChart2,      label: "Analytics" },
+  { href: "/settings",  icon: Settings,       label: "Settings" },
 ] as const;
 
 interface Props {

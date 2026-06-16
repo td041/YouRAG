@@ -8,7 +8,7 @@ import { Message, Collection, Source } from "@/lib/types";
 import { streamChat, fetchSuggestions } from "@/lib/api";
 import {
   Send, Trash2, Layers, Zap,
-  Cpu, Sparkles, User, Bot, Clock, Loader2, ExternalLink, Search, Eye
+  Cpu, Sparkles, User, Bot, Loader2, Search
 } from "lucide-react";
 
 interface Props {
@@ -99,7 +99,7 @@ function MessageContent({ content, onSourceClick }: { content: string; onSourceC
   );
 }
 
-export default function ChatPanel({ collections, activeVideo, theme, onSourceClick }: Props) {
+export default function ChatPanel({ collections, theme, onSourceClick }: Omit<Props, "activeVideo"> & { activeVideo?: Collection | null }) {
   const collection = collections[0] ?? null;
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
@@ -197,11 +197,6 @@ export default function ChatPanel({ collections, activeVideo, theme, onSourceCli
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); }
   }
 
-  function openInYouTube(src: Source) {
-    const vid = src.video_id ?? activeVideo?.video_id;
-    if (!vid) return;
-    window.open(`https://youtube.com/watch?v=${vid}&t=${Math.floor(src.start_time)}s`, "_blank", "noopener");
-  }
 
   return (
     <div className="flex flex-col h-full relative" style={{ background: isDark ? "#050608" : "#f8f9fc" }}>
@@ -338,52 +333,6 @@ export default function ChatPanel({ collections, activeVideo, theme, onSourceCli
                     ) : msg.content}
                   </div>
 
-                  {/* Source chips — clickable to seek + open in YouTube */}
-                  {msg.sources && msg.sources.length > 0 && (
-                    <div className="flex flex-wrap gap-2 mt-1">
-                      <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest"
-                           style={{ background: chipBg, border: `1px solid ${msgBotBorder}`, color: textDim }}>
-                        <Clock size={10} /> Sources
-                      </div>
-                      {msg.sources.map((src, si) => {
-                        const hasVideo = !!(src.video_id ?? activeVideo?.video_id);
-                        const isVisual = src.chunk_type === "visual";
-                        const borderCol = isVisual
-                          ? "rgba(139,92,246,0.25)"
-                          : "rgba(99,102,241,0.15)";
-                        const btnClass = isVisual
-                          ? "px-3 py-1 bg-violet-500/5 hover:bg-violet-500/10 text-[11px] font-mono text-violet-400 transition-all"
-                          : "px-3 py-1 bg-indigo-500/5 hover:bg-indigo-500/10 text-[11px] font-mono text-indigo-400 transition-all";
-                        return (
-                          <div key={si} className="flex items-center rounded-full overflow-hidden" style={{ border: `1px solid ${borderCol}` }}>
-                            {isVisual && (
-                              <span className="pl-2 pr-1 flex items-center" title="Visual frame source">
-                                <Eye size={9} className="text-violet-400/70" />
-                              </span>
-                            )}
-                            <button
-                              onClick={() => onSourceClick?.(src.start_time, src.video_id ?? undefined)}
-                              className={btnClass}
-                              title={`Seek to ${src.label}${isVisual ? " (visual frame)" : ""}${src.title ? ` — ${src.title}` : ""}`}
-                            >
-                              {collections.length > 1 && src.title
-                                ? `${src.title.slice(0, 15)}… ${src.label}`
-                                : src.label}
-                            </button>
-                            {hasVideo && (
-                              <button
-                                onClick={() => openInYouTube(src)}
-                                className="px-2 py-1 bg-indigo-500/5 hover:bg-indigo-500/15 border-l border-indigo-500/15 text-indigo-400/60 hover:text-indigo-400 transition-all"
-                                title="Open in YouTube"
-                              >
-                                <ExternalLink size={10} />
-                              </button>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
 
                   {/* Suggested questions */}
                   {msg.suggestions && msg.suggestions.length > 0 && (
