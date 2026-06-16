@@ -98,6 +98,7 @@ class HybridRetriever:
                 except Exception as e:
                     logger.error(f"Search failed for {collection_name}: {e}")
 
-        # Sort tất cả chunks từ mọi video theo hybrid_score, lấy top k*2
+        # Sort tất cả chunks từ mọi video theo hybrid_score, lấy top_k
+        # Không nhân 2 để tránh context quá lớn gây Groq timeout khi multi-video
         all_results.sort(key=lambda x: x.get("hybrid_score", 0), reverse=True)
-        return all_results[: self.top_k * 2]
+        return all_results[: self.top_k]

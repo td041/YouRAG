@@ -50,7 +50,7 @@ def test_summarize_calls_llm_with_formatted_transcript(mock_deps):
     assert result == "Bản tóm tắt video."
     mock_llm.chat_complete.assert_called_once()
     prompt = mock_llm.chat_complete.call_args.kwargs["prompt"]
-    assert "[0.0s] Hello world" in prompt
+    assert "[0:00] Hello world" in prompt
     assert "[1:00] Goodbye" in prompt
 
 
