@@ -1,7 +1,7 @@
 # YouRAG — API Reference
 
 > Base URL: `http://localhost:8000` (dev) | `https://your-backend.up.railway.app` (production)  
-> Version: 1.2.0
+> Version: 1.3.0
 
 ---
 
@@ -214,6 +214,57 @@ Get chat history for a session (last 20 messages).
   {"role": "assistant", "content": "Tit-for-Tat là chiến thuật..."}
 ]
 ```
+
+---
+
+### `GET /quiz/{collection}`
+
+🔒 **Protected**
+
+Generate quiz (MCQ) or flashcards from video content.
+
+**Query params:**
+
+| Param | Default | Description |
+|---|---|---|
+| `mode` | `quiz` | `quiz` = MCQ trắc nghiệm, `flashcard` = Anki-style |
+| `count` | `10` | Số câu hỏi / flashcard (1–20) |
+
+**Response (mode=quiz):**
+```json
+{
+  "mode": "quiz",
+  "collection": "ly-thuyet-tro-choi",
+  "items": [
+    {
+      "question": "Tit-for-Tat hoạt động như thế nào?",
+      "options": ["A. ...", "B. ...", "C. ...", "D. ..."],
+      "answer": "A",
+      "explanation": "Tit-for-Tat bắt đầu bằng hợp tác...",
+      "timestamp": "3:12",
+      "start_time": 192.0
+    }
+  ]
+}
+```
+
+**Response (mode=flashcard):**
+```json
+{
+  "mode": "flashcard",
+  "collection": "ly-thuyet-tro-choi",
+  "items": [
+    {
+      "front": "Tit-for-Tat",
+      "back": "Chiến thuật: bắt đầu hợp tác, sau đó phản chiếu hành động của đối thủ.",
+      "timestamp": "3:12",
+      "start_time": 192.0
+    }
+  ]
+}
+```
+
+**Rate limit:** 10 requests/minute per IP.
 
 ---
 

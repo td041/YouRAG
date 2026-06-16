@@ -6,7 +6,7 @@
   <img src="https://img.shields.io/badge/Qdrant-Vector_DB-DC382D?logo=qdrant&logoColor=white" alt="Qdrant"/>
   <img src="https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white" alt="Docker"/>
   <img src="https://img.shields.io/badge/CI-GitHub_Actions-2088FF?logo=githubactions&logoColor=white" alt="CI"/>
-  <img src="https://img.shields.io/badge/Coverage-83%25-4CAF50?logo=pytest&logoColor=white" alt="Coverage"/>
+  <img src="https://img.shields.io/badge/Tests-208-4CAF50?logo=pytest&logoColor=white" alt="Tests"/>
 </p>
 
 # YouRAG — Advanced YouTube RAG with Knowledge Graph & Self-Correction
@@ -78,7 +78,10 @@ flowchart TD
 - Mobile responsive — drawer sidebar + tab layout on small screens
 - Dynamic welcome suggestions — 4 questions generated from actual video content
 - Source chips with seek-to-timestamp + open YouTube at exact timestamp
-- Simplified ingest progress bar
+- **Library page** — manage all ingested videos, delete, rebuild graph
+- **Learn page** — Quiz (MCQ với giải thích) + Flashcard (3D flip, Anki-style) với "Xem trong video" modal
+- **Analytics page** — Prometheus metrics dashboard
+- **Settings page** — system config overview
 
 ---
 
@@ -90,7 +93,7 @@ flowchart TD
 | Frontend | Next.js 14, TypeScript, Tailwind CSS |
 | Vector DB | Qdrant (HNSW, cosine similarity) |
 | Embeddings | BAAI/bge-m3 (1024-dim, multilingual) |
-| Reranker | cross-encoder/mmarco-mMiniLMv2-L12-H384-v1 |
+| Reranker | BAAI/bge-reranker-v2-m3 (multilingual, CPU+GPU) |
 | LLM primary | Groq llama-3.3-70b-versatile |
 | LLM fallback | Groq backup key rotation (`GROQ_API_KEYS`) |
 | Chat history | PostgreSQL 15 + Redis 7 (dual-layer) |
@@ -148,6 +151,7 @@ docker compose up -d --build
 | `GET` | `/suggestions/{collection}` | ✅ | Get 4 dynamic suggested questions |
 | `GET` | `/summarize/{collection}` | ✅ | Video summary |
 | `GET` | `/history/{session_id}` | — | Chat history |
+| `GET` | `/quiz/{collection}` | ✅ | Generate quiz (MCQ) or flashcards |
 | `POST` | `/graph/build/{collection}` | ✅ | Build/rebuild knowledge graph |
 | `DELETE` | `/collections/{name}` | ✅ | Delete video |
 
@@ -158,7 +162,7 @@ Protected endpoints require `X-API-Key` header when `API_KEY` is set in `.env`.
 ## Testing
 
 ```bash
-# Unit tests (211 tests, 83% coverage, all mocked)
+# Unit tests (208 tests, all mocked)
 poetry run pytest tests/unit/ -v --cov=src --cov-report=term-missing
 
 # Lint
@@ -177,11 +181,7 @@ make benchmark COLLECTION=your-collection-name
 
 ## Benchmark Results
 
-Evaluated on **20 questions** (mixed difficulty: factual, reasoning, comparative, synthesis) using:
-- **Generation:** `llama-3.3-70b-versatile` via Groq
-- **Evaluator:** `mistral-small-latest` via Mistral AI
-- **Reranker:** `BAAI/bge-reranker-v2-m3`
-- **Embeddings (eval):** `paraphrase-multilingual-MiniLM-L12-v2` (multilingual)
+Ablation study 3 tầng trên **20 câu hỏi** (video "Lý Thuyết Trò Chơi", tiếng Việt):
 
 | Metric | Naive (Dense) | Hybrid (RRF) | Advanced (Rerank) |
 |---|---|---|---|
@@ -190,9 +190,11 @@ Evaluated on **20 questions** (mixed difficulty: factual, reasoning, comparative
 | **Context Precision** | **0.936** ✅ | 0.935 | 0.902 |
 | **Context Recall** | **1.000** ✅ | 0.988 | 0.963 |
 | **Factual Correctness** | 0.733 | **0.777** ✅ | 0.737 |
-| **Latency (s)** | 1.79 | 1.65 | 4.74 |
+| **Latency (s)** | 1.79 | **1.65** ✅ | 4.74 |
 
-> Hybrid retrieval (Dense + BM25 + RRF) achieves the best balance across all metrics. Context Recall = 1.0 on Naive indicates no information is missed at the retrieval stage.
+> Hybrid (Dense + BM25 + RRF) thắng hầu hết metrics **và** nhanh hơn Naive. Advanced tốn 3× thời gian nhưng không cải thiện đáng kể — CrossEncoder phù hợp hơn cho long-tail queries.
+
+Xem chi tiết: [docs/BENCHMARK.md](docs/BENCHMARK.md) — metrics definitions, rate limiting, MLflow, caveats với tiếng Việt.
 
 ---
 
@@ -227,10 +229,14 @@ See [.env.example](.env.example) for full reference.
 - [x] Redis job store + /health endpoint
 - [x] Groq backup key rotation
 - [x] Docker Compose (5 services) + uv fast builds
-- [x] CI/CD (Ruff + Bandit + Pytest, 83% coverage)
-- [ ] Multi-video cross-referencing
-- [ ] Deploy to Railway + Vercel
-- [ ] Sentry monitoring
+- [x] CI/CD (Ruff + Bandit + Pytest, 208 unit tests)
+- [x] Multi-video cross-referencing (multi-collection chat)
+- [x] Visual Frame RAG (Gemini Flash — slides, diagrams, code on screen)
+- [x] Quiz & Flashcard generation (/learn page)
+- [x] Whisper Vietnamese language detection
+- [x] Grafana alerting (4 rules: error rate, latency, memory, uptime)
+- [ ] Playlist / Channel bulk ingest
+- [ ] Deploy to Railway + Vercel (configs ready)
 
 ---
 

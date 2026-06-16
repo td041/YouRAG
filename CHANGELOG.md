@@ -4,18 +4,32 @@ All notable changes to YouRAG are documented here.
 
 ---
 
-## [Unreleased]
+## [Unreleased] — 2026-06-16
 
 ### Added
+- **Visual Frame RAG** — extract video frames every ~30s, Gemini Flash 1.5 describes visual content (slides, diagrams, code), embeds into Qdrant as `chunk_type: "visual"`
+- **Multi-video chat** — `/chat/stream` accepts `collections: [...]` list; `search_multi()` fans out to N collections and RRF-fuses results
+- **Quiz & Flashcard generation** — `GET /quiz/{collection}?mode=quiz|flashcard&count=N` with retry logic and anti-hallucination prompts; `_inject_start_times()` parses timestamp strings server-side
+- **`/learn` page** — 3D CSS flip flashcards, MCQ quiz with score, "Xem trong video" YouTube IFrame seek modal
+- **Library, Analytics, Settings pages** — App Router multi-page layout
+- **Whisper Vietnamese language detection** — counts diacritical chars in title/description, passes `language="vi"` hint to faster-whisper to prevent misidentification as Indonesian/Thai
+- **Grafana alerting** — 4 rules auto-provisioned: error rate >5%, p95 latency >3s, memory >90%, uptime
 - BGE-reranker-v2-m3 replacing mmarco (better multilingual, better Vietnamese)
 - RAGAS benchmark with Mistral evaluator, multilingual embeddings, round-robin Groq key rotation
-- Benchmark results in README (20-question dataset, 5 metrics × 3 tiers)
-- `make benchmark` shortcut in Makefile
 
 ### Changed
+- Reranker now falls back to CPU instead of disabling (208 unit tests, all pass)
+- CORS restricted to `ALLOWED_ORIGINS` env var (default: localhost:3000,3001); removed `allow_credentials=True`
+- Graph store unified to JSON throughout — delete endpoint was last holdout using `.gpickle`
 - Reranker top_k: 5 → 9 (better context recall)
 - GRAPH_MAX_CHUNKS: 15 → 40 (better entity coverage for long videos)
-- Late Chunking (Jina v3) enabled by default
+
+### Fixed
+- `graph_data.get()` AttributeError when `graph_retriever` is None (returned `[]` instead of `{}`)
+- `AIStore.cache` None crash in both stream and non-stream chat endpoints
+- `format_timestamp(c['metadata']['start_time'])` KeyError on malformed chunks (safe `.get()`)
+- Graph retriever `_graph_cache.pop()` crash when `graph_retriever` is None
+- mm:ss timestamp citations in quiz/flashcard always showing "0:01" (LLM was copying example value)
 
 ### Removed
 - Gemini production fallback (Groq rotation handles rate limits)

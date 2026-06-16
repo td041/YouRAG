@@ -1,6 +1,6 @@
 # YouRAG — System Architecture
 
-> Version: 1.2.0 | Last updated: 2026-06-05
+> Version: 1.3.0 | Last updated: 2026-06-16
 
 ---
 
@@ -117,9 +117,22 @@ from src.core.config import settings        # Pydantic Settings
 from src.core.redis_client import get_redis # Lazy Redis client (returns None if down)
 ```
 
+## Frontend Pages (Next.js App Router)
+
+| Route | Purpose |
+|---|---|
+| `/` | Chat + Video panel (main RAG interface) |
+| `/library` | Manage ingested videos, delete, rebuild graph |
+| `/learn` | Quiz (MCQ) + Flashcard (3D flip) per video |
+| `/analytics` | Prometheus metrics via Grafana embed |
+| `/settings` | System config overview |
+
 ## Key Design Decisions
 
 - **JSON over pickle** for graph store — eliminates RCE risk
 - **Redis-first storage** with local file fallback — survives Redis downtime
 - **BM25 in-memory** with 2000-doc cap — prevents OOM on large collections
 - **Round-robin Groq keys** for benchmark — shares daily quota evenly across accounts
+- **Visual Frame RAG** skips gracefully when `GEMINI_API_KEY` not set — text-only fallback
+- **CORS restricted** to `ALLOWED_ORIGINS` env var — no wildcard + credentials in production
+- **Reranker on CPU** — warns but loads; GPU preferred, CPU tolerated for dev/CI
