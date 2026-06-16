@@ -19,15 +19,12 @@ class CrossEncoderReranker:
         self.model_name = getattr(settings, "CROSS_ENCODER_MODEL", "BAAI/bge-reranker-v2-m3")
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self._model = None
-        
-        # Load mô hình khi khởi tạo
+
         if self.device == "cpu":
             logger.warning(
-                "⚠️ Reranker disabled: no GPU detected. "
-                "Reranking a 568M model on CPU takes 3+ minutes per query — skipping. "
-                "Add a GPU or set CROSS_ENCODER_MODEL to a smaller model to enable."
+                "⚠️ Reranker chạy trên CPU — model 568M sẽ chậm hơn GPU. "
+                "Thêm GPU hoặc set CROSS_ENCODER_MODEL=cross-encoder/ms-marco-MiniLM-L-6-v2 để nhanh hơn."
             )
-            return
 
         logger.info(f"⏳ Đang tải Cross-Encoder Model: {self.model_name} (Device: {self.device})...")
         try:
