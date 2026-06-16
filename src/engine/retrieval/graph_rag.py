@@ -5,7 +5,7 @@ Kiến trúc:
 1. Build Phase (Lúc Ingestion):
    - LLM trích xuất (Entity, Relationship, Entity) triples từ mỗi chunk
    - Xây dựng NetworkX Graph: Node = Entity, Edge = Relationship
-   - Lưu Graph xuống disk (pickle) theo từng Collection
+   - Lưu Graph xuống disk (JSON) theo từng Collection
 
 2. Query Phase (Lúc Chat):
    - Trích Entity từ câu hỏi user

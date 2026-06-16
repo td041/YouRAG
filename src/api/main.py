@@ -410,9 +410,9 @@ async def delete_collection(collection_name: str, _: str = Depends(require_api_k
     """Xóa một collection (video) khỏi Qdrant và graph store."""
     try:
         db_instance.client.delete_collection(collection_name)
-        # Xóa knowledge graph nếu có
+        # Xóa knowledge graph (.json — graph_rag.py dùng JSON, không dùng pickle)
         import os
-        graph_path = os.path.join("graph_store", f"{collection_name}.gpickle")
+        graph_path = os.path.join("graph_store", f"{collection_name}.json")
         if os.path.exists(graph_path):
             os.remove(graph_path)
         # Invalidate in-memory graph cache
@@ -476,7 +476,8 @@ async def build_graph(collection: str, _: str = Depends(require_api_key)):
         builder = KnowledgeGraphBuilder()
         G = builder.build_graph(collection)
         # Invalidate cache trong GraphRetriever để load lại graph mới
-        AIStore.graph_retriever._graph_cache.pop(collection, None)
+        if AIStore.graph_retriever:
+            AIStore.graph_retriever._graph_cache.pop(collection, None)
         return {
             "status": "success",
             "collection": collection,
@@ -520,7 +521,10 @@ async def chat_rag(request: Request, req: ChatRequest, _: str = Depends(require_
             return {"answer": "Không tìm thấy thông tin phù hợp trong video này.", "sources": [], "facts": [], "session_id": session_id}
 
         # 2. Graph RAG Search (lấy graph_data thật)
-        graph_data = AIStore.graph_retriever.search(req.query, collection_name=req.collection)
+        graph_data = (
+            AIStore.graph_retriever.search(req.query, collection_name=req.collection)
+            if AIStore.graph_retriever else []
+        )
 
         # 3. Rerank
         final_chunks = AIStore.reranker.rerank(query=req.query, chunks=candidates, top_k=9)
