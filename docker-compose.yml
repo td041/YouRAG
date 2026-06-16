@@ -66,6 +66,8 @@ services:
       - "8000:8000"
     volumes:
       - ./src:/app/src
+      # Benchmark reports — generated on host, read by backend API
+      - ./tests/benchmark:/app/tests/benchmark:ro
       # Mount model cache từ host — tránh tải lại 4.8GB mỗi lần rebuild
       - ~/.cache/huggingface:/root/.cache/huggingface
       - ~/.cache/torch:/root/.cache/torch
@@ -81,6 +83,7 @@ services:
       - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
       - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
       - LANGFUSE_HOST=http://langfuse:3000
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
     deploy:
       resources:
         limits:
@@ -112,6 +115,11 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        # NEXT_PUBLIC_* are baked at build time — proxy through Next.js server
+        # so the browser never needs to reach port 8000 directly (avoids WSL2 issues)
+        - NEXT_PUBLIC_API_URL=/api/backend
+        - NEXT_PUBLIC_API_KEY=${API_KEY:-}
     container_name: yourag-frontend
     ports:
       - "3000:3000"
@@ -119,7 +127,6 @@ services:
       - 8.8.8.8
       - 1.1.1.1
     environment:
-      - NEXT_PUBLIC_API_URL=http://localhost:8000
       - NEXT_PUBLIC_API_KEY=${API_KEY:-}
     depends_on:
       backend:
@@ -127,6 +134,36 @@ services:
     restart: unless-stopped
     networks:
       - yourag_network
+
+  # ─── EXPERIMENT TRACKING ──────────────────────────────────────────
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:latest
+    container_name: yourag-mlflow
+    ports:
+      - "5001:5000"
+    environment:
+      - MLFLOW_BACKEND_STORE_URI=postgresql://yourag_user:yourag_pass@postgres:5432/mlflow_db
+      - MLFLOW_DEFAULT_ARTIFACT_ROOT=/mlflow/artifacts
+    volumes:
+      - mlflow_data:/mlflow/artifacts
+    command: >
+      mlflow server
+      --host 0.0.0.0
+      --port 5000
+      --backend-store-uri postgresql://yourag_user:yourag_pass@postgres:5432/mlflow_db
+      --default-artifact-root /mlflow/artifacts
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - yourag_network
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:5000/health')\" 2>/dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
 
   # ─── TRACING ──────────────────────────────────────────────────────
   langfuse:
@@ -226,6 +263,7 @@ volumes:
   prometheus_data:
   grafana_data:
   loki_data:
+  mlflow_data:
 
 networks:
   yourag_network:
