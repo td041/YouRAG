@@ -135,6 +135,9 @@ poetry.lock                  # KHÔNG ignore — cần lock cho reproducibility
 # BENCHMARK OUTPUT (generated — không cần track)
 # ================================================
 tests/benchmark/ragas_report.json
+tests/benchmark/ragas_report.md
+tests/benchmark/eval_dataset.json
+tests/benchmark/dataset.json
 tests/benchmark/eval_results_*.json
 
 # ================================================
@@ -163,5 +166,8 @@ scratch/
 # Local project guides and internal docs (not for repo)
 CLAUDE.md
 docs/FUTURE_UPGRADES.md
+docs/ROADMAP.md
+docs/CODEBASE_GUIDE.md
+docs/BENCHMARK.md
 .claude/
 modify_app.py

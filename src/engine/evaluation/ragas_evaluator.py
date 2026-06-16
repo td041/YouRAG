@@ -586,69 +586,170 @@ class RAGASEvaluator:
         logger.info(f"📝 Markdown report: {_DEFAULT_REPORT_MD}")
 
     def _build_markdown_report(self, comparison: Dict) -> str:
-        """Tạo Markdown report cho GitHub / Notion."""
+        """Tạo Markdown report đầy đủ cho GitHub / Notion / MLflow artifact."""
+        core_metrics = [
+            "faithfulness", "answer_relevancy", "context_precision",
+            "context_recall", "factual_correctness",
+        ]
+        improvements = comparison.get("improvements", {})
+        naive_s  = comparison["0_naive"]["ragas_scores"]
+        hybrid_s = comparison["1_hybrid"]["ragas_scores"]
+        adv_s    = comparison["2_advanced"]["ragas_scores"]
+
+        # Detect evaluator LLM thực tế (Mistral hay Groq fallback)
+        mistral_key = (
+            settings.MISTRAL_EVAL_API_KEY.get_secret_value()
+            if getattr(settings, "MISTRAL_EVAL_API_KEY", None)
+            else os.getenv("MISTRAL_EVAL_API_KEY", "")
+        )
+        evaluator_label = (
+            "`mistral-small-latest` via Mistral AI"
+            if mistral_key
+            else "`llama-3.1-8b-instant` via Groq *(fallback — Faithfulness/Recall có thể NaN)*"
+        )
+
+        # Detect factual_correctness fallback (semantic similarity)
+        fc_fallback = naive_s.get("_fallback") or any(
+            comparison[t]["ragas_scores"].get("_fallback") for t in ["0_naive", "1_hybrid", "2_advanced"]
+        )
+
+        def _fmt(v: Optional[float]) -> str:
+            return f"{v:.4f}" if v is not None else "N/A"
+
+        def _delta_fmt(v: Optional[float]) -> str:
+            if v is None:
+                return "—"
+            sign = "+" if v >= 0 else ""
+            return f"{sign}{v:.4f}"
+
+        def _composite(scores: Dict) -> Optional[float]:
+            vals = [scores.get(m) for m in core_metrics if scores.get(m) is not None]
+            return round(sum(vals) / len(vals), 4) if vals else None
+
+        n_comp = _composite(naive_s)
+        h_comp = _composite(hybrid_s)
+        a_comp = _composite(adv_s)
+
         lines = [
             "# YouRAG — RAGAS Evaluation Report",
             "",
             f"**Collection:** `{comparison['collection']}`  ",
             f"**Generated:** {comparison['generated_at']}  ",
             f"**Questions:** {comparison['0_naive']['total_questions']}  ",
-            f"**Generation LLM:** `{settings.LLM_MODEL_NAME}` via Groq  ",
-            "**Evaluator LLM:** `mistral-small-latest` via Mistral AI  ",
-            "**Evaluator Embeddings:** `paraphrase-multilingual-MiniLM-L12-v2` (multilingual)  ",
-            f"**Reranker:** `{settings.CROSS_ENCODER_MODEL}`",
             "",
-            "## Ablation Study Results",
+            "### Models",
             "",
-            "| Metric | Naive (Tầng 0) | Hybrid (Tầng 1) | Advanced (Tầng 2) | Δ Total | Improvement |",
-            "|--------|---------------|-----------------|-------------------|---------|-------------|",
+            "| Role | Model |",
+            "|------|-------|",
+            f"| Generation LLM | `{settings.LLM_MODEL_NAME}` via Groq |",
+            f"| Evaluator LLM | {evaluator_label} |",
+            "| Evaluator Embeddings | `paraphrase-multilingual-MiniLM-L12-v2` (multilingual) |",
+            f"| Reranker | `{settings.CROSS_ENCODER_MODEL}` |",
+            f"| Embeddings (production) | `{settings.EMBEDDING_MODEL_NAME}` |",
+            "",
+            "### Pipeline Config",
+            "",
+            "| Param | Value |",
+            "|-------|-------|",
+            f"| top_k_retrieval | {settings.TOP_K_RETRIEVAL} |",
+            f"| top_k_rerank | {settings.TOP_K_RERANK} |",
+            f"| chunk_size | {settings.CHUNK_SIZE} |",
+            "",
         ]
 
-        core_metrics = [
-            "faithfulness", "answer_relevancy", "context_precision",
-            "context_recall", "factual_correctness",
+        if fc_fallback:
+            lines += [
+                "> ⚠️ **Note:** `factual_correctness` dùng **semantic similarity fallback** (cosine sim với `paraphrase-multilingual-MiniLM-L12-v2`) thay vì RAGAS claim decomposition — RAGAS FactualCorrectness không ổn định với tiếng Việt.",
+                "",
+            ]
+
+        lines += [
+            "## Ablation Study Results",
+            "",
+            "| Metric | Naive (Tầng 0) | Hybrid (Tầng 1) | Advanced (Tầng 2) | Δ Hybrid | Δ Reranker | Δ Total |",
+            "|--------|:--------------:|:---------------:|:-----------------:|:--------:|:----------:|:-------:|",
         ]
-        improvements = comparison.get("improvements", {})
-        naive_s = comparison["0_naive"]["ragas_scores"]
 
         for metric in core_metrics:
             if metric in improvements:
                 imp = improvements[metric]
-                n = f"{imp['naive']:.4f}"
-                h = f"{imp['hybrid']:.4f}" if imp["hybrid"] is not None else "N/A"
-                a = f"{imp['advanced']:.4f}" if imp["advanced"] is not None else "N/A"
-                delta = imp["delta_total"]
-                pct = imp["improvement_pct"]
-                sign = "+" if delta >= 0 else ""
-                icon = "🟢" if delta > 0.001 else ("🔴" if delta < -0.001 else "⚪")
+                delta_total = imp["delta_total"]
+                icon = "🟢" if delta_total > 0.001 else ("🔴" if delta_total < -0.001 else "⚪")
                 lines.append(
-                    f"| {metric} | {n} | {h} | {a} | {sign}{delta:.4f} | {icon} {sign}{pct}% |"
+                    f"| {metric} "
+                    f"| {_fmt(imp['naive'])} "
+                    f"| {_fmt(imp['hybrid'])} "
+                    f"| {_fmt(imp['advanced'])} "
+                    f"| {_delta_fmt(imp.get('delta_hybrid_vs_naive'))} "
+                    f"| {_delta_fmt(imp.get('delta_advanced_vs_hybrid'))} "
+                    f"| {icon} {_delta_fmt(delta_total)} |"
                 )
             else:
                 n = naive_s.get(metric)
-                lines.append(
-                    f"| {metric} | {'N/A' if n is None else f'{n:.4f}'} | N/A | N/A | — | — |"
-                )
+                lines.append(f"| {metric} | {_fmt(n)} | N/A | N/A | — | — | — |")
 
-        # Latency
+        # Latency + Composite rows
         n_lat = comparison["0_naive"]["avg_latency_s"]
         h_lat = comparison["1_hybrid"]["avg_latency_s"]
         a_lat = comparison["2_advanced"]["avg_latency_s"]
         lines += [
-            f"| **Latency (s)** | {n_lat} | {h_lat} | {a_lat} | — | — |",
+            f"| **Latency avg (s)** | {n_lat} | {h_lat} | {a_lat} | — | — | — |",
+            f"| **Composite score** | {_fmt(n_comp)} | {_fmt(h_comp)} | {_fmt(a_comp)} | — | — | — |",
             "",
+        ]
+
+        # Best tier summary
+        best_tier_scores = {"Naive": n_comp or 0, "Hybrid": h_comp or 0, "Advanced": a_comp or 0}
+        best_tier = max(best_tier_scores, key=best_tier_scores.get)
+        lines += [
+            f"> **Kết luận:** Tầng tốt nhất theo composite score = **{best_tier}** ({_fmt(best_tier_scores[best_tier])})",
+            "",
+        ]
+
+        # Per-question breakdown (worst 5 by faithfulness + answer_relevancy)
+        all_pq = comparison["0_naive"].get("per_question", [])
+        lines.append("## Per-Question Breakdown (Naive tier)")
+        lines.append("")
+        if all_pq and all_pq[0].get("ragas_scores"):
+            scored = []
+            for item in all_pq:
+                rs = item.get("ragas_scores", {})
+                faith = rs.get("faithfulness")
+                rel   = rs.get("answer_relevancy")
+                if faith is not None and rel is not None:
+                    scored.append(((faith + rel) / 2, item["question"][:80], faith, rel))
+            scored.sort(key=lambda x: x[0])
+            if scored:
+                lines += [
+                    "Worst 5 câu hỏi (faithfulness + answer_relevancy thấp nhất):",
+                    "",
+                    "| # | Question | Faithfulness | Answer Relevancy |",
+                    "|---|----------|:------------:|:----------------:|",
+                ]
+                for i, (score, q, f, r) in enumerate(scored[:5], 1):
+                    lines.append(f"| {i} | {q} | {_fmt(f)} | {_fmt(r)} |")
+                lines.append("")
+            else:
+                lines += ["*Per-question scores không khả dụng (tất cả metrics là NaN).*", ""]
+        else:
+            lines += ["*Per-question RAGAS scores chưa được tính (RAGAS fallback hoặc chạy --evaluate riêng lẻ).*", ""]
+
+        lines += [
             "## Metric Definitions",
             "",
-            "| Metric | Mô tả |",
-            "|--------|-------|",
-            "| **Faithfulness** | Câu trả lời trung thành với context, không hallucinate |",
-            "| **Answer Relevancy** | Câu trả lời có liên quan đến câu hỏi không |",
-            "| **Context Precision** | Context truy xuất có chính xác, ít nhiễu không |",
-            "| **Context Recall** | Context có bao phủ đủ ground truth không |",
-            "| **Factual Correctness** | Câu trả lời đúng thực tế so với ground truth |",
+            "| Metric | Ý nghĩa | Cần |",
+            "|--------|---------|-----|",
+            "| **Faithfulness** | Claims trong answer được hỗ trợ bởi context (anti-hallucination) | LLM (n>1) |",
+            "| **Answer Relevancy** | Answer có thực sự trả lời question không | LLM + Embeddings |",
+            "| **Context Precision** | Chunks truy xuất được có liên quan, ít nhiễu | LLM |",
+            "| **Context Recall** | Context bao phủ đủ ground truth, không bỏ sót | LLM (n>1) |",
+            "| **Factual Correctness** | Answer đúng thực tế so với ground truth | LLM hoặc semantic sim |",
+            "| **Composite** | Trung bình 5 metrics — so sánh nhanh giữa các tầng | — |",
             "",
             "---",
-            f"*Evaluated with [RAGAS 0.4.x](https://docs.ragas.io) | Generation: `{settings.LLM_MODEL_NAME}` | Evaluator: `mistral-small-latest`*",
+            f"*Evaluated with [RAGAS 0.4.x](https://docs.ragas.io) "
+            f"| Generation: `{settings.LLM_MODEL_NAME}` "
+            f"| Evaluator: {evaluator_label}*",
         ]
         return "\n".join(lines)
 

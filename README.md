@@ -181,7 +181,11 @@ make benchmark COLLECTION=your-collection-name
 
 ## Benchmark Results
 
-Ablation study 3 tầng trên **20 câu hỏi** (video "Lý Thuyết Trò Chơi", tiếng Việt):
+Evaluated on **20 questions** (mixed difficulty: factual, reasoning, comparative, synthesis) using:
+- **Generation:** `llama-3.3-70b-versatile` via Groq
+- **Evaluator:** `mistral-small-latest` via Mistral AI
+- **Reranker:** `BAAI/bge-reranker-v2-m3`
+- **Embeddings (eval):** `paraphrase-multilingual-MiniLM-L12-v2` (multilingual)
 
 | Metric | Naive (Dense) | Hybrid (RRF) | Advanced (Rerank) |
 |---|---|---|---|
@@ -190,11 +194,9 @@ Ablation study 3 tầng trên **20 câu hỏi** (video "Lý Thuyết Trò Chơi"
 | **Context Precision** | **0.936** ✅ | 0.935 | 0.902 |
 | **Context Recall** | **1.000** ✅ | 0.988 | 0.963 |
 | **Factual Correctness** | 0.733 | **0.777** ✅ | 0.737 |
-| **Latency (s)** | 1.79 | **1.65** ✅ | 4.74 |
+| **Latency (s)** | 1.79 | 1.65 | 4.74 |
 
-> Hybrid (Dense + BM25 + RRF) thắng hầu hết metrics **và** nhanh hơn Naive. Advanced tốn 3× thời gian nhưng không cải thiện đáng kể — CrossEncoder phù hợp hơn cho long-tail queries.
-
-Xem chi tiết: [docs/BENCHMARK.md](docs/BENCHMARK.md) — metrics definitions, rate limiting, MLflow, caveats với tiếng Việt.
+> Hybrid retrieval (Dense + BM25 + RRF) achieves the best balance across all metrics. Context Recall = 1.0 on Naive indicates no information is missed at the retrieval stage.
 
 ---
 
