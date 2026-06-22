@@ -5,7 +5,8 @@ FROM python:3.12-slim AS builder
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     VIRTUAL_ENV=/app/.venv \
-    PATH="/app/.venv/bin:$PATH"
+    PATH="/app/.venv/bin:$PATH" \
+    UV_HTTP_TIMEOUT=300
 
 WORKDIR /app
 
@@ -31,7 +32,9 @@ FROM python:3.12-slim AS runner
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PATH="/app/.venv/bin:$PATH" \
-    VIRTUAL_ENV="/app/.venv"
+    VIRTUAL_ENV="/app/.venv" \
+    HF_HOME=/app/models \
+    TOKENIZERS_PARALLELISM=false
 
 WORKDIR /app
 
@@ -40,6 +43,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /app/.venv /app/.venv
+
+# Pre-download models into image layer.
+# IMPORTANT: placed BEFORE "COPY src" so code changes don't invalidate this cache layer.
+# Docker rebuilds này layer chỉ khi preload_models.py thay đổi (~2.5GB, 1 lần duy nhất).
+COPY scripts/preload_models.py ./scripts/preload_models.py
+RUN python scripts/preload_models.py
+
 COPY src ./src
 
 EXPOSE 8000

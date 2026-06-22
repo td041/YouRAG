@@ -68,22 +68,22 @@ services:
       - ./src:/app/src
       # Benchmark reports — generated on host, read by backend API
       - ./tests/benchmark:/app/tests/benchmark:ro
-      # Mount model cache từ host — tránh tải lại 4.8GB mỗi lần rebuild
-      - ~/.cache/huggingface:/root/.cache/huggingface
-      - ~/.cache/torch:/root/.cache/torch
+      # Models đã được bake vào image (HF_HOME=/app/models trong Dockerfile).
+      # Named volume giúp container restart không cần extract lại từ image layer.
+      - hf_models:/app/models
     environment:
       - QDRANT_SERVER_URL=http://qdrant:6333
       - GROQ_API_KEY=${GROQ_API_KEY}
-      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - GROQ_API_KEYS=${GROQ_API_KEYS:-}
       - JINA_API_KEY=${JINA_API_KEY:-}
       - API_KEY=${API_KEY:-}
+      - HF_HOME=/app/models
       - DEVICE=cuda
       - REDIS_URL=redis://redis:6379/0
       - DATABASE_URL=postgresql://yourag_user:yourag_pass@postgres:5432/yourag_db
       - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
       - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
       - LANGFUSE_HOST=http://langfuse:3000
-      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
     deploy:
       resources:
         limits:
@@ -134,6 +134,12 @@ services:
     restart: unless-stopped
     networks:
       - yourag_network
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/health 2>/dev/null || wget -qO- http://localhost:3000 2>/dev/null | grep -q 'YouRAG\\|__NEXT' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 15s
 
   # ─── EXPERIMENT TRACKING ──────────────────────────────────────────
   mlflow:
@@ -174,8 +180,9 @@ services:
     environment:
       - DATABASE_URL=postgresql://yourag_user:yourag_pass@postgres:5432/langfuse_db
       - NEXTAUTH_URL=http://localhost:3002
-      - NEXTAUTH_SECRET=${LANGFUSE_NEXTAUTH_SECRET:-langfuse-dev-secret-change-in-prod}
-      - SALT=${LANGFUSE_SALT:-langfuse-dev-salt-change-in-prod}
+      # PRODUCTION: set LANGFUSE_NEXTAUTH_SECRET and LANGFUSE_SALT in .env (min 32 chars each)
+      - NEXTAUTH_SECRET=${LANGFUSE_NEXTAUTH_SECRET:-langfuse-dev-secret-do-not-use-in-prod}
+      - SALT=${LANGFUSE_SALT:-langfuse-dev-salt-do-not-use-in-prod}
       - TELEMETRY_ENABLED=false
       - LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES=true
       # Auto-seed admin account + project on first start
@@ -264,6 +271,7 @@ volumes:
   grafana_data:
   loki_data:
   mlflow_data:
+  hf_models:
 
 networks:
   yourag_network:
