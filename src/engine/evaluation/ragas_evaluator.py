@@ -8,10 +8,10 @@ Tích hợp RAGAS 0.4.x để đo lường toàn diện chất lượng YouRAG v
 - Context Recall       : Context có bao phủ đủ ground truth không?
 - Factual Correctness  : Câu trả lời đúng thực tế so với ground truth không?
 
-Ablation Study 3 tầng:
-  Tầng 0 - NAIVE      : Dense Search only (baseline)
-  Tầng 1 - HYBRID     : Dense + BM25 Sparse (RRF fusion)
-  Tầng 2 - ADVANCED   : Hybrid + Cross-Encoder Reranker (SOTA)
+Ablation Study 3 tầng (mỗi tầng đều dùng graph_facts + global_summary, top_k=9):
+  Tầng 0 - NAIVE      : Dense only (BAAI/bge-m3) — baseline
+  Tầng 1 - HYBRID     : Dense + SPLADE + Query Expansion + RRF fusion
+  Tầng 2 - ADVANCED   : Hybrid → CrossEncoder rerank (bge-reranker-v2-m3) — production-equivalent
 """
 
 import json
@@ -49,11 +49,21 @@ class RAGASEvaluator:
     5. Xuất báo cáo JSON + Markdown chi tiết
     """
 
+    # Production values (mirror src/api/main.py)
+    _RETRIEVAL_POOL = 10   # candidates fetched before rerank
+    _FINAL_TOP_K = 9       # chunks passed to LLM (all 3 tiers)
+
     def __init__(self) -> None:
-        self.hybrid_retriever = HybridRetriever(top_k=10)
-        self.naive_retriever = DenseRetriever(top_k=5)
+        self.hybrid_retriever = HybridRetriever(top_k=self._RETRIEVAL_POOL)
+        self.naive_retriever = DenseRetriever(top_k=self._RETRIEVAL_POOL)
         self.reranker = CrossEncoderReranker()
         self.db = db_instance
+
+        # Graph + Summary — dùng cho Advanced tier (production-accurate)
+        from src.engine.retrieval.graph_rag import GraphRetriever
+        from src.engine.generation.summarizer import VideoSummarizer
+        self.graph_retriever = GraphRetriever()
+        self.summarizer = VideoSummarizer()
 
         # Build round-robin Groq clients để chia đều daily token quota
         from groq import Groq
@@ -107,19 +117,39 @@ class RAGASEvaluator:
         t0 = time.time()
 
         if mode == "naive":
+            # Dense only — no rerank, no RRF (baseline)
             results = self.naive_retriever.search(query, collection_name)
-            top_results = results[:5]
+            top_results = results[: self._FINAL_TOP_K]
 
         elif mode == "hybrid":
+            # Dense + SPLADE + RRF — no rerank (measures retrieval quality)
             candidates = self.hybrid_retriever.search(query, collection_name)
-            top_results = candidates[:5]
+            top_results = candidates[: self._FINAL_TOP_K]
 
         else:  # advanced
+            # Dense + SPLADE + RRF → CrossEncoder rerank (production-equivalent)
             candidates = self.hybrid_retriever.search(query, collection_name)
-            top_results = self.reranker.rerank(query=query, chunks=candidates, top_k=9)
+            top_results = self.reranker.rerank(
+                query=query, chunks=candidates, top_k=self._FINAL_TOP_K
+            )
 
         contexts = [r["content"] for r in top_results if r.get("content")]
-        answer = self.generator.generate(query=query, retrieved_chunks=top_results)
+
+        # Graph facts + global summary — production-accurate cho cả 3 tầng
+        # Chỉ retrieval method khác nhau, còn lại giống /chat production
+        try:
+            graph_data = self.graph_retriever.search(query, collection_name=collection_name)
+        except Exception:
+            graph_data = {"facts": [], "graph_summary": ""}
+        global_summary = self.summarizer.summarize(collection_name) or ""
+
+        answer = self.generator.generate(
+            query=query,
+            retrieved_chunks=top_results,
+            global_summary=global_summary,
+            graph_facts=graph_data.get("facts", []),
+            graph_summary=graph_data.get("graph_summary", ""),
+        )
 
         return {
             "answer": answer,
@@ -470,7 +500,7 @@ class RAGASEvaluator:
         logger.info("\n🐢 TẦNG 0: NAIVE RAG (Dense Search only)")
         naive = self.evaluate(collection_name, "naive", dataset_path)
 
-        logger.info("\n🛠️  TẦNG 1: HYBRID SEARCH (Dense + BM25 RRF)")
+        logger.info("\n🛠️  TẦNG 1: HYBRID SEARCH (Dense + SPLADE RRF)")
         hybrid = self.evaluate(collection_name, "hybrid", dataset_path)
 
         logger.info("\n🚀 TẦNG 2: ADVANCED SOTA (Hybrid + Cross-Encoder Reranker)")

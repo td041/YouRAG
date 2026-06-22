@@ -2,10 +2,9 @@
 Visual Frame RAG — extract frames from YouTube video, describe with a vision model,
 embed, and upsert alongside text chunks.
 
-Priority: Gemini 1.5 Flash (cheapest) → GPT-4o-mini (fallback).
+Priority: Groq llama-3.2-11b-vision (primary) → GPT-4o-mini (fallback).
 Both fail gracefully: visual RAG is skipped, text RAG still works.
 """
-import io
 import os
 import base64
 import tempfile
@@ -112,7 +111,6 @@ class VisualDescriber:
     """Describe a JPEG frame using vision models.
 
     Priority: Groq llama-3.2-11b-vision (primary, uses existing GROQ_API_KEY)
-              → Gemini 1.5 Flash (if GEMINI_API_KEY set)
               → GPT-4o-mini (if OPENAI_API_KEY set)
     """
 
@@ -120,7 +118,6 @@ class VisualDescriber:
         """Return description string, or None if frame has no educational content."""
         text = (
             self._groq(image_bytes, timestamp)
-            or self._gemini(image_bytes, timestamp)
             or self._openai(image_bytes, timestamp)
         )
         if not text or text.strip() == "NO_CONTENT":
@@ -165,30 +162,6 @@ class VisualDescriber:
             return resp.choices[0].message.content
         except Exception as e:
             logger.debug(f"[VisualDescriber] Groq vision failed: {e}")
-            return None
-
-    # ── Gemini 1.5 Flash (optional fallback) ──────────────────────────────
-    def _gemini(self, image_bytes: bytes, timestamp: float) -> Optional[str]:
-        api_key = getattr(settings, "GEMINI_API_KEY", None)
-        if not api_key:
-            return None
-        if hasattr(api_key, "get_secret_value"):
-            api_key = api_key.get_secret_value()
-        try:
-            import google.generativeai as genai
-            import PIL.Image
-
-            genai.configure(api_key=api_key)
-            model = genai.GenerativeModel("gemini-2.0-flash")
-            img = PIL.Image.open(io.BytesIO(image_bytes))
-            ts = _fmt_ts(timestamp)
-            resp = model.generate_content(
-                [f"{_VISION_PROMPT}\n\nFrame timestamp: {ts}", img],
-                generation_config={"max_output_tokens": 250, "temperature": 0.1},
-            )
-            return resp.text
-        except Exception as e:
-            logger.debug(f"[VisualDescriber] Gemini failed: {e}")
             return None
 
     # ── GPT-4o-mini vision (optional fallback) ────────────────────────────

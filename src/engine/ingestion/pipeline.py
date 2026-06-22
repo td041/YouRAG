@@ -1,4 +1,5 @@
 import re
+import threading
 from typing import Dict, List, Any, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -99,12 +100,25 @@ def _run_save_to_qdrant(
 
     db_instance.client.upsert(collection_name=col_name, points=points)
 
-    try:
-        builder = KnowledgeGraphBuilder()
-        builder.build_graph(col_name)
-        logger.info(f"🕸️ Knowledge Graph built for [{col_name}]")
-    except Exception as e:
-        logger.warning(f"Knowledge Graph build failed (non-critical): {e}")
+    def _build_kg():
+        try:
+            builder = KnowledgeGraphBuilder()
+            builder.build_graph(col_name)
+            logger.info(f"🕸️ Knowledge Graph built for [{col_name}]")
+        except Exception as e:
+            logger.warning(f"Knowledge Graph build failed (non-critical): {e}")
+
+    threading.Thread(target=_build_kg, daemon=True, name=f"kg-build-{col_name}").start()
+
+    def _pregen_summary():
+        try:
+            from src.engine.generation.summarizer import VideoSummarizer
+            VideoSummarizer().summarize(col_name)
+            logger.info(f"⚡ Summary pre-generated and cached for [{col_name}]")
+        except Exception as e:
+            logger.warning(f"Summary pre-generation failed (non-critical): {e}")
+
+    threading.Thread(target=_pregen_summary, daemon=True, name=f"summary-pregen-{col_name}").start()
 
     return {
         "status": "success",
