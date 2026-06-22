@@ -11,6 +11,32 @@ class DenseRetriever:
         self.top_k = top_k
         self.db = db_instance
 
+    def search_by_vector(
+        self, vector: List[float], collection_name: str
+    ) -> List[Dict[str, Any]]:
+        """Search bằng pre-computed vector (dùng cho HyDE)."""
+        try:
+            response = self.db.client.query_points(
+                collection_name=collection_name,
+                query=vector,
+                limit=self.top_k,
+                with_payload=True,
+            )
+            results = []
+            for res in response.points:
+                payload = dict(res.payload or {})
+                content = payload.pop("text", "")
+                results.append({
+                    "id": res.id,
+                    "content": content,
+                    "metadata": payload,
+                    "distance": round(res.score, 4),
+                })
+            return results
+        except Exception as e:
+            logger.error(f"❌ search_by_vector error: {e}")
+            return []
+
     def search(self, query: str, collection_name: str, filters: dict = None) -> List[Dict[str, Any]]:
         """Nhúng câu hỏi (query) và tìm kiếm Vector.
 
