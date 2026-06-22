@@ -2,13 +2,13 @@
 
 import pytest
 
-# Mock DenseRetriever and SparseRetriever BEFORE importing HybridRetriever
-# because __init__ constructs them immediately
+# Mock DenseRetriever, SpladeRetriever and QueryExpander BEFORE importing HybridRetriever
 @pytest.fixture(autouse=True)
 def mock_retrievers(mocker):
-    """Block DenseRetriever and SparseRetriever instantiation."""
     mocker.patch("src.engine.retrieval.hybrid_search.DenseRetriever")
-    mocker.patch("src.engine.retrieval.hybrid_search.SparseRetriever")
+    mocker.patch("src.engine.retrieval.hybrid_search.SpladeRetriever")
+    mock_expander = mocker.patch("src.engine.retrieval.hybrid_search.QueryExpander")
+    mock_expander.return_value.expand.return_value = []
 
 
 from src.engine.retrieval.hybrid_search import HybridRetriever  # noqa: E402

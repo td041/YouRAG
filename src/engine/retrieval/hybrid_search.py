@@ -1,83 +1,122 @@
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import List, Dict, Any
+from typing import Any, Dict, List, Optional
+import re
+
 from src.engine.retrieval.dense_search import DenseRetriever
-from src.engine.retrieval.sparse_search import SparseRetriever
+from src.engine.retrieval.splade_search import SpladeRetriever
+from src.engine.retrieval.query_expander import QueryExpander
 from src.core.logger import logger
 
+
 class HybridRetriever:
-    """Hybrid Search kết hợp hai thế lực:
-    - Dense Search (Vector, ý nghĩa từ BAAI/bge-m3)
-    - Sparse Search (BM25, từ khóa chính xác)
+    """Hybrid Search kết hợp Dense (bge-m3) + SPLADE sparse + Query Expansion.
     Sử dụng Reciprocal Rank Fusion (RRF) để kết hợp kết quả.
     """
 
-    def __init__(self, top_k: int = 5, rrf_k: int = 60, alpha: float = 0.5):
-        """
-        Args:
-            top_k: Số lượng document trả về cuối cùng
-            rrf_k: Hằng số tinh chỉnh RRF (tránh việc rank 1 được ưu tiên quá lố)
-            alpha: Trọng số giữa Dense và Sparse. 0.5 = cân đối. (0 = BM25, 1 = Dense)
-        """
+    def __init__(self, top_k: int = 7, rrf_k: int = 60, alpha: float = 0.6):
         self.top_k = top_k
         self.rrf_k = rrf_k
         self.alpha = alpha
-        
-        # Singleton retrievers — BM25 index cached across requests
         self.dense = DenseRetriever(top_k=top_k * 2)
-        self.sparse = SparseRetriever(top_k=top_k * 2)
+        self.sparse = SpladeRetriever(top_k=top_k * 2)
+        self._expander = QueryExpander(n=2)
+        self._db = None
+
+    @staticmethod
+    def _detect_lang(text: str) -> str:
+        vi_count = len(re.findall(
+            r'[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]',
+            text.lower(),
+        ))
+        return "vi" if vi_count / max(len(text), 1) > 0.03 else "en"
+
+    def _hyde_vector(self, query: str) -> Optional[List[float]]:
+        """HyDE: generate hypothetical answer → embed → dùng làm dense query vector.
+        Dùng 8b-instant để nhanh. Trả về None nếu fail.
+        """
+        try:
+            from src.engine.generation.llm_client import LLMClient
+            from src.core.config import settings
+            llm = LLMClient(model=settings.LLM_CONTEXTUAL_MODEL)
+            if self._detect_lang(query) == "en":
+                prompt = f"Write a short paragraph (2-3 sentences) answering this question:\n{query}"
+                system = "Answer directly and concisely."
+            else:
+                prompt = f"Viết một đoạn văn ngắn (2-3 câu) trả lời câu hỏi sau:\n{query}"
+                system = "Trả lời trực tiếp, súc tích."
+            hypo = llm.chat_complete(prompt=prompt, system=system, max_tokens=150, temperature=0.3)
+            if self._db is None:
+                from src.core.database import db_instance
+                self._db = db_instance
+            vector = self._db.embedding_model.encode([hypo])[0].tolist()
+            logger.info(f"[HyDE] hypothetical doc generated ({len(hypo)} chars)")
+            return vector
+        except Exception as e:
+            logger.warning(f"[HyDE] Failed, skipping: {e}")
+            return None
 
     def search(self, query: str, collection_name: str, filters: dict = None) -> List[Dict[str, Any]]:
-        """Tìm kiếm Hybrid sử dụng Reciprocal Rank Fusion (RRF)."""
-        logger.info(f"✨ Hybrid Search (RRF): '{query}' -> [{collection_name}]")
-        
-        # 1. Dense + Sparse chạy song song — tiết kiệm ~300ms mỗi query
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            future_dense = executor.submit(self.dense.search, query, collection_name, filters)
-            future_sparse = executor.submit(self.sparse.search, query, collection_name)
-            dense_results = future_dense.result()
-            sparse_results = future_sparse.result()
-        
-        if not dense_results and not sparse_results:
+        """Hybrid Dense+SPLADE với Query Expansion và HyDE (tuỳ độ dài query).
+        Tất cả chạy song song trong ThreadPoolExecutor.
+        """
+        logger.info(f"✨ Hybrid Search (RRF): '{query[:60]}' -> [{collection_name}]")
+
+        _use_hyde = len(query.split()) >= 10
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            future_dense_base = executor.submit(self.dense.search, query, collection_name, filters)
+            future_sparse_base = executor.submit(self.sparse.search, query, collection_name)
+            future_expand = executor.submit(self._expander.expand, query)
+            future_hyde = executor.submit(self._hyde_vector, query) if _use_hyde else None
+
+            expanded = future_expand.result()
+            logger.info(f"   Query expansion: {1 + len(expanded)} queries total")
+
+            futures_dense_extra = [
+                executor.submit(self.dense.search, q, collection_name, filters) for q in expanded
+            ]
+            futures_sparse_extra = [
+                executor.submit(self.sparse.search, q, collection_name) for q in expanded
+            ]
+
+            dense_results_list = [future_dense_base.result()] + [f.result() for f in futures_dense_extra]
+            sparse_results_list = [future_sparse_base.result()] + [f.result() for f in futures_sparse_extra]
+            hyde_vec = future_hyde.result() if future_hyde else None
+
+        if hyde_vec:
+            hyde_results = self.dense.search_by_vector(hyde_vec, collection_name)
+            dense_results_list.append(hyde_results)
+            logger.info(f"   HyDE: {len(hyde_results)} results added")
+
+        if not any(dense_results_list) and not any(sparse_results_list):
             return []
 
-        # 2. Thuật toán RRF: Tính điểm fusion cho từng document ID
-        rrf_scores = {}
-        doc_contents = {}
+        rrf_scores: Dict[Any, float] = {}
+        doc_contents: Dict[Any, Dict] = {}
 
-        # 2A. RRF cho Dense (Vector)
-        for rank, doc in enumerate(dense_results, 1):
-            doc_id = doc["id"]
-            if doc_id not in rrf_scores:
-                rrf_scores[doc_id] = 0.0
+        for dense_results in dense_results_list:
+            for rank, doc in enumerate(dense_results, 1):
+                doc_id = doc["id"]
+                rrf_scores.setdefault(doc_id, 0.0)
                 doc_contents[doc_id] = doc
-            
-            # Tính điểm RRF Dense: (1 / (rrf_k + rank)) * tỷ trọng Dense (alpha)
-            rrf_scores[doc_id] += self.alpha * (1.0 / (self.rrf_k + rank))
+                rrf_scores[doc_id] += self.alpha * (1.0 / (self.rrf_k + rank))
 
-        # 2B. RRF cho Sparse (BM25)
-        for rank, doc in enumerate(sparse_results, 1):
-            doc_id = doc["id"]
-            if doc_id not in rrf_scores:
-                rrf_scores[doc_id] = 0.0
+        for sparse_results in sparse_results_list:
+            for rank, doc in enumerate(sparse_results, 1):
+                doc_id = doc["id"]
+                rrf_scores.setdefault(doc_id, 0.0)
                 doc_contents[doc_id] = doc
-                
-            # Tính điểm RRF Sparse: (1 / (rrf_k + rank)) * tỷ trọng Sparse (1 - alpha)
-            rrf_scores[doc_id] += (1.0 - self.alpha) * (1.0 / (self.rrf_k + rank))
+                rrf_scores[doc_id] += (1.0 - self.alpha) * (1.0 / (self.rrf_k + rank))
 
-        # 3. Sắp xếp kết quả sau khi fusion
         sorted_rrf = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)
-        
-        # 4. Trả về top K cuối cùng
         final_results = []
-        for doc_id, final_score in sorted_rrf[:self.top_k]:
+        for doc_id, final_score in sorted_rrf[: self.top_k]:
             doc = doc_contents[doc_id].copy()
             doc["hybrid_score"] = round(final_score, 5)
-            # Dọn đi các rác của từng thuật toán để UI sạch
             doc.pop("score", None)
             doc.pop("distance", None)
             final_results.append(doc)
 
-        logger.info(f"✅ Hybrid Search thành công (top {len(final_results)} results)")
+        logger.info(f"✅ Hybrid Search: top {len(final_results)} results")
         return final_results
 
     def search_multi(self, query: str, collection_names: List[str]) -> List[Dict[str, Any]]:
@@ -87,18 +126,13 @@ class HybridRetriever:
 
         logger.info(f"🔍 Multi-collection search: {len(collection_names)} videos")
         all_results: List[Dict[str, Any]] = []
-
         with ThreadPoolExecutor(max_workers=min(len(collection_names), 4)) as executor:
             futures = {executor.submit(self.search, query, name): name for name in collection_names}
             for future in as_completed(futures):
-                collection_name = futures[future]
                 try:
-                    results = future.result()
-                    all_results.extend(results)
+                    all_results.extend(future.result())
                 except Exception as e:
-                    logger.error(f"Search failed for {collection_name}: {e}")
+                    logger.error(f"Search failed for {futures[future]}: {e}")
 
-        # Sort tất cả chunks từ mọi video theo hybrid_score, lấy top_k
-        # Không nhân 2 để tránh context quá lớn gây Groq timeout khi multi-video
         all_results.sort(key=lambda x: x.get("hybrid_score", 0), reverse=True)
         return all_results[: self.top_k]
