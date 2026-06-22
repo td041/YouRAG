@@ -10,39 +10,46 @@ class PromptBuilder:
             "Bạn là chuyên gia phân tích Video. NHIỆM VỤ: Trả lời CHỈ dựa trên [Tài liệu], [Tổng quan] và [Bản đồ thực thể] được cung cấp.\n"
             "QUY TẮC NGHIÊM NGẶT:\n"
             "1. Xưng 'tôi'. TUYỆT ĐỐI KHÔNG dùng câu mở đầu kiểu 'Tôi sẽ trả lời...', 'Dựa trên tài liệu...', 'Câu hỏi của bạn là...'. Bắt đầu NGAY bằng nội dung trả lời.\n"
-            "2. LUÔN trích dẫn mốc [mm:ss] cho MỌI thông tin cụ thể lấy từ tài liệu.\n"
+            "2. Trích dẫn bằng [mm:ss] cho thông tin cụ thể. "
+            "TUYỆT ĐỐI KHÔNG dùng ký hiệu ¹ ² ³ ⁴ hay [1] [2] [3] [4] — CHỈ ĐƯỢC DÙNG định dạng [mm:ss].\n"
             "3. Nếu câu hỏi về số lượng, ưu tiên dùng số liệu từ [Bản đồ thực thể].\n"
             "4. TUYỆT ĐỐI KHÔNG bịa thêm thông tin không có trong [Tài liệu]. "
             "Nếu thông tin không xuất hiện trong tài liệu, trả lời: "
             "'Tôi không tìm thấy thông tin này trong video.'\n"
             "5. Chỉ trích dẫn [mm:ss] nếu timestamp đó thực sự xuất hiện trong [Tài liệu] bên dưới.\n"
+            "6. Dùng **in đậm** cho thuật ngữ quan trọng, tiêu đề mục, và kết luận chính.\n"
         )
 
         if mode == "mindmap":
             return base_rules + (
-                "6. ĐỊNH DẠNG: Sử dụng Mermaid Syntax (graph TD) để vẽ sơ đồ quan hệ nếu cần thiết.\n"
-                "7. Sử dụng bảng (Markdown Table) cho các dữ liệu so sánh."
+                "7. ĐỊNH DẠNG: Sử dụng Mermaid Syntax (graph TD) để vẽ sơ đồ quan hệ nếu cần thiết.\n"
+                "8. Sử dụng bảng (Markdown Table) cho các dữ liệu so sánh."
             )
 
-        return base_rules + "6. Trả lời bằng tiếng Việt chuyên sâu, chính xác."
+        return base_rules + "7. Trả lời bằng tiếng Việt chuyên sâu, chính xác."
 
     @staticmethod
     def build_user_prompt(
-        query: str, 
-        context_str: str, 
-        global_summary: Optional[str] = None, 
+        query: str,
+        context_str: str,
+        global_summary: Optional[str] = None,
         graph_facts: Optional[List[str]] = None,
         graph_summary: Optional[str] = None,
-        chat_history: str = ""
+        chat_history: str = "",
+        valid_timestamps: Optional[List[str]] = None,
     ) -> str:
         """Lắp ghép các thành phần dữ liệu thành User Prompt hoàn chỉnh."""
-        
+
         summary_info = f"\n--- TỔNG QUAN VIDEO ---\n{global_summary}\n" if global_summary else ""
         graph_info = f"\n--- BẢN ĐỒ THỰC THỂ TOÀN CỤC ---\n{graph_summary}\n" if graph_summary else ""
-        
+
         facts_str = ""
         if graph_facts:
             facts_str = "\n--- DỮ LIỆU ĐỒ THỊ (TRỰC QUAN) ---\n" + "\n".join([f"- {f}" for f in graph_facts]) + "\n"
+
+        ts_hint = ""
+        if valid_timestamps:
+            ts_hint = f"\n⚠️ CÁC MỐC THỜI GIAN HỢP LỆ (CHỈ ĐƯỢC DÙNG CÁC MỐC NÀY): {', '.join(valid_timestamps)}\n"
 
         return f"""
 Câu hỏi từ người dùng: "{query}"
@@ -51,7 +58,7 @@ Câu hỏi từ người dùng: "{query}"
 {summary_info}
 {graph_info}
 {facts_str}
-
+{ts_hint}
 --- TÀI LIỆU CHI TIẾT (VIDEO CHUNKS) ---
 {context_str}
 

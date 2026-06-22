@@ -7,6 +7,9 @@ from src.core.utils import format_timestamp
 
 _NO_CONTEXT_REPLY = "Tôi không tìm thấy thông tin liên quan đến câu hỏi này trong video."
 
+# Unicode superscript digits/symbols that LLMs sometimes emit as footnote markers
+_SUPERSCRIPT_RE = re.compile(r"[¹²³⁴⁵⁶⁷⁸⁹⁰⁻⁺⁼⁽⁾ⁿ]+")
+
 
 class AnswerGenerator:
     """Module cuối cùng của luồng RAG: Sinh câu trả lời dựa trên ngữ cảnh đã được truy xuất.
@@ -43,6 +46,13 @@ class AnswerGenerator:
             )
 
         return "\n".join(context_parts)
+
+    def _strip_superscripts(self, text: str) -> str:
+        """Strip Unicode superscript footnote markers hallucinated by the LLM (¹²³⁴...)."""
+        cleaned = _SUPERSCRIPT_RE.sub("", text)
+        if cleaned != text:
+            logger.warning("[CitationGrounding] Stripped superscript footnote markers from answer")
+        return cleaned
 
     def _validate_citations(self, answer: str, retrieved_chunks: List[Dict[str, Any]]) -> str:
         """Citation Grounding: xóa [mm:ss] không tương ứng với bất kỳ chunk nào đã retrieve.
@@ -106,6 +116,21 @@ class AnswerGenerator:
         context_str = self._build_context_string(retrieved_chunks)
         mode = "mindmap" if any(k in query.lower() for k in ["quan hệ", "cấu trúc", "sơ đồ", "bản đồ"]) else "standard"
         system_prompt = PromptBuilder.build_system_prompt(mode=mode)
+
+        # Build explicit allowlist of valid timestamps so streaming path
+        # can't produce hallucinated citations (validation runs post-stream).
+        seen: set = set()
+        valid_timestamps: List[str] = []
+        for chunk in retrieved_chunks:
+            meta = chunk.get("metadata", {})
+            try:
+                ts = format_timestamp(float(meta.get("start_time", 0)))
+                if ts not in seen:
+                    seen.add(ts)
+                    valid_timestamps.append(f"[{ts}]")
+            except (TypeError, ValueError):
+                pass
+
         user_prompt = PromptBuilder.build_user_prompt(
             query=query,
             context_str=context_str,
@@ -113,6 +138,7 @@ class AnswerGenerator:
             graph_facts=graph_facts,
             graph_summary=graph_summary,
             chat_history=chat_history,
+            valid_timestamps=valid_timestamps if valid_timestamps else None,
         )
         return system_prompt, user_prompt
 
@@ -157,7 +183,8 @@ class AnswerGenerator:
             else:
                 final_answer = draft_answer
 
-            # Citation Grounding — xóa timestamp bịa
+            # Strip hallucinated superscript footnotes then validate [mm:ss] citations
+            final_answer = self._strip_superscripts(final_answer)
             final_answer = self._validate_citations(final_answer, retrieved_chunks)
             return final_answer
 
