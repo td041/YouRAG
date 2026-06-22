@@ -5,10 +5,45 @@ import { useCollections } from "@/lib/collections-context";
 import { deleteCollection, ingestVideo } from "@/lib/api";
 import {
   Trash2, MessageSquare, Library, Loader2, Search,
-  Plus, Sparkles, Eye, CheckCircle2, XCircle, X,
+  Plus, Sparkles, Eye, CheckCircle2, XCircle, X, Menu,
 } from "lucide-react";
 
 type IngestStatus = "idle" | "queued" | "running" | "ok" | "error";
+
+function ConfirmDeleteModal({ name, onConfirm, onCancel }: { name: string; onConfirm: () => void; onCancel: () => void }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.7)" }}>
+      <div className="w-full max-w-sm rounded-2xl shadow-2xl overflow-hidden animate-slide-up"
+           style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}>
+        <div className="p-6">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="w-10 h-10 rounded-xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center shrink-0">
+              <Trash2 size={18} className="text-rose-400" />
+            </div>
+            <div>
+              <p className="text-[15px] font-bold" style={{ color: "var(--text)" }}>Delete video?</p>
+              <p className="text-[12px] mt-0.5 truncate max-w-[220px]" style={{ color: "var(--text-dim)" }}>{name}</p>
+            </div>
+          </div>
+          <p className="text-[13px] mb-5" style={{ color: "var(--text-dim)" }}>
+            This will permanently remove the video and all its indexed data. This action cannot be undone.
+          </p>
+          <div className="flex gap-3">
+            <button onClick={onCancel}
+                    className="flex-1 h-10 rounded-xl text-[13px] font-semibold transition-all hover:bg-white/5"
+                    style={{ border: "1px solid var(--border)", color: "var(--text-muted)" }}>
+              Cancel
+            </button>
+            <button onClick={onConfirm}
+                    className="flex-1 h-10 rounded-xl text-[13px] font-bold text-white transition-all active:scale-95 bg-rose-500 hover:bg-rose-600">
+              Delete
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function IngestModal({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
   const [url, setUrl] = useState("");
@@ -119,22 +154,22 @@ function IngestModal({ onClose, onDone }: { onClose: () => void; onDone: () => v
 }
 
 export default function LibraryPage() {
-  const { collections, loadingCollections, onDeleted, loadCollections, setSelectedCollections, setActiveVideo } = useCollections();
+  const { collections, loadingCollections, onDeleted, loadCollections, setSelectedCollections, setActiveVideo, openSidebar } = useCollections();
   const router = useRouter();
   const [search, setSearch] = useState("");
   const [deletingName, setDeletingName] = useState<string | null>(null);
   const [showIngest, setShowIngest] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
   const filtered = collections.filter(c =>
     c.title.toLowerCase().includes(search.toLowerCase())
   );
 
   async function handleDelete(name: string) {
-    if (!confirm(`Delete "${name}"?`)) return;
     setDeletingName(name);
     try { await deleteCollection(name); onDeleted(name); }
     catch (err) { alert(err instanceof Error ? err.message : String(err)); }
-    finally { setDeletingName(null); }
+    finally { setDeletingName(null); setConfirmDelete(null); }
   }
 
   function handleOpenInChat(c: typeof collections[0]) {
@@ -151,16 +186,31 @@ export default function LibraryPage() {
           onDone={() => { loadCollections(); }}
         />
       )}
+      {confirmDelete && (
+        <ConfirmDeleteModal
+          name={confirmDelete}
+          onConfirm={() => handleDelete(confirmDelete)}
+          onCancel={() => setConfirmDelete(null)}
+        />
+      )}
 
       <div className="flex flex-col h-full theme-bg theme-text">
         {/* Header */}
-        <header className="flex items-center justify-between px-6 sm:px-8 py-5 border-b shrink-0"
+        <header className="flex items-center justify-between px-4 sm:px-6 lg:px-8 py-4 sm:py-5 border-b shrink-0"
                 style={{ borderColor: "var(--border)" }}>
-          <div>
-            <h1 className="text-2xl font-bold font-display" style={{ color: "var(--text)" }}>Video Library</h1>
-            <p className="text-[13px] mt-0.5" style={{ color: "var(--text-dim)" }}>
-              {collections.length} {collections.length === 1 ? "video" : "videos"} indexed
-            </p>
+          <div className="flex items-center gap-3">
+            <button onClick={openSidebar}
+                    className="lg:hidden p-1.5 rounded-xl hover:bg-white/5 transition-all shrink-0"
+                    style={{ color: "var(--text-dim)" }}
+                    aria-label="Open menu">
+              <Menu size={18} />
+            </button>
+            <div>
+              <h1 className="text-2xl font-bold font-display" style={{ color: "var(--text)" }}>Video Library</h1>
+              <p className="text-[13px] mt-0.5" style={{ color: "var(--text-dim)" }}>
+                {collections.length} {collections.length === 1 ? "video" : "videos"} indexed
+              </p>
+            </div>
           </div>
           <div className="flex items-center gap-3">
             <div className="relative">
@@ -238,7 +288,7 @@ export default function LibraryPage() {
                               className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-[12px] font-bold accent-gradient text-white transition-all active:scale-95">
                         <MessageSquare size={13} /> Open in Chat
                       </button>
-                      <button onClick={() => handleDelete(c.name)}
+                      <button onClick={() => setConfirmDelete(c.name)}
                               disabled={deletingName === c.name}
                               className="p-2 rounded-xl border transition-all hover:bg-rose-500/10 hover:border-rose-500/30"
                               style={{ borderColor: "var(--border)", color: "var(--text-dim)" }}>

@@ -5,7 +5,7 @@ import { fetchQuiz } from "@/lib/api";
 import {
   BookOpen, Layers, RotateCcw, ChevronLeft, ChevronRight,
   CheckCircle2, XCircle, Loader2, Sparkles, GraduationCap,
-  RefreshCw, X, Play,
+  RefreshCw, X, Play, Menu,
 } from "lucide-react";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -209,7 +209,7 @@ function QuizQuestion({ q, index, total, onAnswer, onSeek }: {
 // ─── Main page ─────────────────────────────────────────────────────────────────
 
 export default function LearnPage() {
-  const { collections, selectedCollections, setSelectedCollections } = useCollections();
+  const { collections, selectedCollections, setSelectedCollections, openSidebar } = useCollections();
   const [mode, setMode] = useState<Mode>("quiz");
   const [count, setCount] = useState(5);
   const [phase, setPhase] = useState<Phase>("setup");
@@ -267,11 +267,19 @@ export default function LearnPage() {
   // ── Setup screen ──
   if (phase === "setup") return (
     <div className="flex flex-col h-full theme-bg theme-text">
-      <header className="px-6 sm:px-8 py-5 border-b shrink-0" style={{ borderColor: "var(--border)" }}>
-        <h1 className="text-2xl font-bold font-display" style={{ color: "var(--text)" }}>Learn</h1>
-        <p className="text-[13px] mt-0.5" style={{ color: "var(--text-dim)" }}>
-          Quiz trắc nghiệm · Flashcard — học từ video đã index
-        </p>
+      <header className="flex items-start gap-3 px-4 sm:px-6 lg:px-8 py-4 sm:py-5 border-b shrink-0" style={{ borderColor: "var(--border)" }}>
+        <button onClick={openSidebar}
+                className="lg:hidden p-1.5 rounded-xl hover:bg-white/5 transition-all shrink-0 mt-1"
+                style={{ color: "var(--text-dim)" }}
+                aria-label="Open menu">
+          <Menu size={18} />
+        </button>
+        <div>
+          <h1 className="text-2xl font-bold font-display" style={{ color: "var(--text)" }}>Learn</h1>
+          <p className="text-[13px] mt-0.5" style={{ color: "var(--text-dim)" }}>
+            Quiz trắc nghiệm · Flashcard — học từ video đã index
+          </p>
+        </div>
       </header>
 
       <div className="flex-1 overflow-y-auto p-6 sm:p-8 flex items-start justify-center">
@@ -361,7 +369,8 @@ export default function LearnPage() {
     if (mode === "flashcard") {
       return (
         <div className="flex flex-col h-full theme-bg theme-text">
-          <header className="px-6 sm:px-8 py-5 border-b shrink-0" style={{ borderColor: "var(--border)" }}>
+          <header className="flex items-center gap-3 px-4 sm:px-6 lg:px-8 py-4 sm:py-5 border-b shrink-0" style={{ borderColor: "var(--border)" }}>
+            <button onClick={openSidebar} className="lg:hidden p-1.5 rounded-xl hover:bg-white/5 transition-all shrink-0" style={{ color: "var(--text-dim)" }} aria-label="Open menu"><Menu size={18} /></button>
             <h1 className="text-2xl font-bold font-display" style={{ color: "var(--text)" }}>Hoàn thành</h1>
           </header>
           <div className="flex-1 flex flex-col items-center justify-center gap-6 p-8">
@@ -395,7 +404,8 @@ export default function LearnPage() {
     const color = pct >= 80 ? "#34d399" : pct >= 60 ? "#818cf8" : "#f87171";
     return (
       <div className="flex flex-col h-full theme-bg theme-text">
-        <header className="px-6 sm:px-8 py-5 border-b shrink-0" style={{ borderColor: "var(--border)" }}>
+        <header className="flex items-center gap-3 px-4 sm:px-6 lg:px-8 py-4 sm:py-5 border-b shrink-0" style={{ borderColor: "var(--border)" }}>
+          <button onClick={openSidebar} className="lg:hidden p-1.5 rounded-xl hover:bg-white/5 transition-all shrink-0" style={{ color: "var(--text-dim)" }} aria-label="Open menu"><Menu size={18} /></button>
           <h1 className="text-2xl font-bold font-display" style={{ color: "var(--text)" }}>Kết quả</h1>
         </header>
         <div className="flex-1 flex flex-col items-center justify-center gap-6 p-8">
@@ -428,9 +438,10 @@ export default function LearnPage() {
   // ── Playing screen ──
   return (
     <div className="flex flex-col h-full theme-bg theme-text relative">
-      <header className="flex items-center justify-between px-6 sm:px-8 py-4 border-b shrink-0"
+      <header className="flex items-center justify-between px-4 sm:px-6 lg:px-8 py-4 border-b shrink-0"
               style={{ borderColor: "var(--border)" }}>
         <div className="flex items-center gap-3">
+          <button onClick={openSidebar} className="lg:hidden p-1.5 rounded-xl hover:bg-white/5 transition-all shrink-0" style={{ color: "var(--text-dim)" }} aria-label="Open menu"><Menu size={18} /></button>
           {mode === "quiz" ? <BookOpen size={16} className="text-indigo-400" /> : <Layers size={16} className="text-indigo-400" />}
           <h1 className="text-[15px] font-bold" style={{ color: "var(--text)" }}>
             {mode === "quiz" ? "Quiz" : "Flashcard"}

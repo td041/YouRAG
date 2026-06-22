@@ -39,7 +39,19 @@ export async function ingestVideo(
     if (!s.ok) throw new Error("Không thể kiểm tra trạng thái ingest");
     const job = await s.json();
     onProgress?.(job.status);
-    if (job.status === "done") return job.result;
+    if (job.status === "done") {
+      const result = job.result;
+      if (result?.latency) {
+        const { recordIngest } = await import("./perf-store");
+        recordIngest({
+          title: result.title ?? "",
+          collection: result.collection_name ?? "",
+          latency: result.latency,
+          chunks: result.chunks_added ?? 0,
+        });
+      }
+      return result;
+    }
     if (job.status === "error") throw new Error(job.error ?? "Ingest thất bại");
   }
 }
@@ -66,6 +78,9 @@ export async function fetchSuggestions(collection: string): Promise<string[]> {
   return data.suggestions ?? [];
 }
 
+const PROGRESS_PREFIX = "__PROGRESS__";
+const META_SENTINEL = "\n\n__META__";
+
 export function streamChat(
   query: string,
   collections: string[],
@@ -76,6 +91,8 @@ export function streamChat(
   onSessionId: (id: string) => void,
   onDone: () => void,
   onError: (e: string) => void,
+  onProgress?: (msg: string) => void,
+  onLatency?: (latency: Record<string, number>, cached: boolean) => void,
 ) {
   const ctrl = new AbortController();
 
@@ -89,25 +106,55 @@ export function streamChat(
       if (!r.ok) { onError(await r.text()); return; }
       const reader = r.body!.getReader();
       const dec = new TextDecoder();
-      const META_SENTINEL = "\n\n__META__";
-      let buf = "";
-      let textContent = "";
+      let buf = "";        // full accumulated buffer (for meta detection at end)
+      let textContent = ""; // accumulated display text (excludes PROGRESS lines)
+      let lineBuf = "";    // incomplete line fragment (for PROGRESS line detection)
+      let progressDone = false; // true after first non-PROGRESS content arrives
 
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
-        const chunk = dec.decode(value, { stream: true });
-        buf += chunk;
+        const raw = dec.decode(value, { stream: true });
+        buf += raw;
 
-        const metaIdx = buf.indexOf(META_SENTINEL);
-        if (metaIdx === -1) {
-          // No meta frame yet — stream everything as text
-          onChunk(chunk);
-          textContent += chunk;
-        } else if (textContent.length < metaIdx) {
-          // Meta frame arrived mid-chunk — flush remaining text before it
-          const remaining = buf.slice(textContent.length, metaIdx);
-          if (remaining) { onChunk(remaining); textContent += remaining; }
+        if (!progressDone) {
+          // PROGRESS phase: scan line-by-line until first LLM text arrives
+          lineBuf += raw;
+          let nlIdx: number;
+          while ((nlIdx = lineBuf.indexOf("\n")) !== -1) {
+            const line = lineBuf.slice(0, nlIdx + 1); // includes \n
+            lineBuf = lineBuf.slice(nlIdx + 1);
+            if (line.startsWith(PROGRESS_PREFIX)) {
+              onProgress?.(line.slice(PROGRESS_PREFIX.length).trim());
+            } else {
+              // First non-PROGRESS complete line → switch to pass-through mode
+              progressDone = true;
+              onChunk(line);
+              textContent += line;
+              break;
+            }
+          }
+          // Flush any remaining lineBuf as LLM content (now in pass-through).
+          // Even when META is already present in buf, flush everything before
+          // the sentinel so we don't silently drop the first LLM sentence.
+          if (progressDone && lineBuf) {
+            const metaPos = buf.indexOf(META_SENTINEL);
+            const bufOffset = buf.length - lineBuf.length; // where lineBuf starts in buf
+            const flushEnd = metaPos !== -1 ? Math.max(0, metaPos - bufOffset) : lineBuf.length;
+            const toFlush = lineBuf.slice(0, flushEnd);
+            if (toFlush) { onChunk(toFlush); textContent += toFlush; }
+            lineBuf = "";
+          }
+        } else {
+          // Pass-through phase: stream directly to onChunk (old behaviour)
+          const metaIdx = buf.indexOf(META_SENTINEL);
+          if (metaIdx === -1) {
+            onChunk(raw);
+            textContent += raw;
+          } else if (textContent.length < metaIdx) {
+            const remaining = buf.slice(textContent.length, metaIdx);
+            if (remaining) { onChunk(remaining); textContent += remaining; }
+          }
         }
       }
 
@@ -120,6 +167,9 @@ export function streamChat(
           onSources(meta.sources ?? []);
           onSuggestions(meta.suggestions ?? []);
           onSessionId(meta.session_id ?? "");
+          if (meta.latency_ms && onLatency) {
+            onLatency(meta.latency_ms, meta.cached ?? false);
+          }
         } catch (e) {
           console.warn("Failed to parse stream meta frame", e);
         }

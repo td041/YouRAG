@@ -60,8 +60,9 @@ flowchart TD
 ### RAG Pipeline
 - **2-Phase Semantic Chunking**: Pause-aware atomic splitting + vector semantic valley detection (dynamic percentile threshold, adapts per video)
 - **Knowledge Graph**: Extracts `(subject, predicate, object)` triples → NetworkX directed graph → multi-hop reasoning
-- **Hybrid Search + RRF**: Dense (Qdrant bge-m3) + Sparse (BM25) fused with Reciprocal Rank Fusion
-- **Cross-Encoder Reranking**: mmarco-mMiniLMv2 for precise relevance scoring
+- **4-Signal Hybrid Search + RRF**: Dense (bge-m3) + SPLADE neural sparse + Query Expansion (2 variants) + HyDE — all fused via Reciprocal Rank Fusion
+- **Cross-Encoder Reranking**: BAAI/bge-reranker-v2-m3 for precise relevance scoring
+- **Contextual Compression**: Filters irrelevant sentences from each chunk before LLM generation — reduces noise, improves faithfulness
 - **Semantic Cache**: Per-collection Qdrant-backed cache — same question on different videos never cross-contaminates
 
 ### Production Hardening
@@ -97,7 +98,7 @@ flowchart TD
 | LLM primary | Groq llama-3.3-70b-versatile |
 | LLM fallback | Groq backup key rotation (`GROQ_API_KEYS`) |
 | Chat history | PostgreSQL 15 + Redis 7 (dual-layer) |
-| BM25 | rank-bm25 |
+| Sparse Retrieval | SPLADE (naver/efficient-splade-VI-BT-large, bilingual) |
 | Knowledge Graph | NetworkX (JSON serialization, no pickle) |
 | Evaluation | RAGAS framework |
 | Build | uv (Docker), Poetry (local/CI) |
@@ -182,12 +183,14 @@ make benchmark COLLECTION=your-collection-name
 ## Benchmark Results
 
 Evaluated on **20 questions** (mixed difficulty: factual, reasoning, comparative, synthesis) using:
-- **Generation:** `llama-3.3-70b-versatile` via Groq
+- **Generation:** `llama-3.3-70b-versatile` via Groq (5-key round-robin)
 - **Evaluator:** `mistral-small-latest` via Mistral AI
 - **Reranker:** `BAAI/bge-reranker-v2-m3`
 - **Embeddings (eval):** `paraphrase-multilingual-MiniLM-L12-v2` (multilingual)
 
-| Metric | Naive (Dense) | Hybrid (RRF) | Advanced (Rerank) |
+> ⚠️ Results below were from the previous stack (BM25). New benchmark pending with updated stack (SPLADE + Query Expansion + HyDE + Contextual Compression). All 3 tiers now use graph_facts + global_summary + top_k=9 (production-accurate).
+
+| Metric | Naive (Dense) | Hybrid (SPLADE+RRF) | Advanced (Rerank) |
 |---|---|---|---|
 | **Faithfulness** | 0.851 | **0.929** ✅ | 0.843 |
 | **Answer Relevancy** | 0.767 | **0.832** ✅ | 0.782 |
@@ -195,8 +198,6 @@ Evaluated on **20 questions** (mixed difficulty: factual, reasoning, comparative
 | **Context Recall** | **1.000** ✅ | 0.988 | 0.963 |
 | **Factual Correctness** | 0.733 | **0.777** ✅ | 0.737 |
 | **Latency (s)** | 1.79 | 1.65 | 4.74 |
-
-> Hybrid retrieval (Dense + BM25 + RRF) achieves the best balance across all metrics. Context Recall = 1.0 on Naive indicates no information is missed at the retrieval stage.
 
 ---
 
@@ -233,10 +234,14 @@ See [.env.example](.env.example) for full reference.
 - [x] Docker Compose (5 services) + uv fast builds
 - [x] CI/CD (Ruff + Bandit + Pytest, 208 unit tests)
 - [x] Multi-video cross-referencing (multi-collection chat)
-- [x] Visual Frame RAG (Gemini Flash — slides, diagrams, code on screen)
+- [x] Visual Frame RAG (Groq/OpenAI vision — slides, diagrams, code on screen)
 - [x] Quiz & Flashcard generation (/learn page)
 - [x] Whisper Vietnamese language detection
 - [x] Grafana alerting (4 rules: error rate, latency, memory, uptime)
+- [x] SPLADE neural sparse retrieval (replaces BM25, bilingual VI+EN)
+- [x] Query Expansion (multi-query, 2 LLM-generated variants per query)
+- [x] HyDE (Hypothetical Document Embeddings for better semantic match)
+- [x] Contextual Compression (filter irrelevant sentences before LLM)
 - [ ] Playlist / Channel bulk ingest
 - [ ] Deploy to Railway + Vercel (configs ready)
 

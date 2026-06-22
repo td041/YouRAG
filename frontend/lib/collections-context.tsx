@@ -19,7 +19,10 @@ interface CollectionsCtx {
   loadingCollections: boolean;
   apiOnline: boolean;
   theme: "dark" | "light";
+  sidebarOpen: boolean;
   setTheme: (t: "dark" | "light") => void;
+  openSidebar: () => void;
+  closeSidebar: () => void;
   setSelectedCollections: React.Dispatch<React.SetStateAction<Collection[]>>;
   setActiveVideo: React.Dispatch<React.SetStateAction<Collection | null>>;
   loadCollections: () => Promise<void>;
@@ -38,6 +41,10 @@ export function CollectionsProvider({ children }: { children: ReactNode }) {
   const [apiOnline, setApiOnline] = useState<boolean>(() =>
     typeof window !== "undefined" ? readCache().length > 0 : false
   );
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const openSidebar = useCallback(() => setSidebarOpen(true), []);
+  const closeSidebar = useCallback(() => setSidebarOpen(false), []);
+
   const [theme, setThemeState] = useState<"dark" | "light">(() => {
     if (typeof window !== "undefined") {
       return (localStorage.getItem(THEME_KEY) as "dark" | "light") ?? "dark";
@@ -88,6 +95,7 @@ export function CollectionsProvider({ children }: { children: ReactNode }) {
   return (
     <Ctx.Provider value={{
       collections, selectedCollections, activeVideo, loadingCollections, apiOnline, theme,
+      sidebarOpen, openSidebar, closeSidebar,
       setTheme, setSelectedCollections, setActiveVideo, loadCollections, onDeleted,
     }}>
       {children}

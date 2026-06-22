@@ -3,10 +3,10 @@ import { useState } from "react";
 import { useCollections } from "@/lib/collections-context";
 import VideoPanel from "@/components/VideoPanel";
 import ChatPanel from "@/components/ChatPanel";
-import { Globe, Play, MessageSquare, LayoutDashboard } from "lucide-react";
+import { Globe, Play, MessageSquare, LayoutDashboard, Menu } from "lucide-react";
 
 export default function ChatPage() {
-  const { selectedCollections, activeVideo, setActiveVideo, collections, theme } = useCollections();
+  const { selectedCollections, activeVideo, setActiveVideo, collections, theme, openSidebar } = useCollections();
   // Use { time, seq } so clicking same timestamp twice still triggers iframe re-render
   const [seek, setSeek] = useState<{ time: number; seq: number } | undefined>();
   const [mobileTab, setMobileTab] = useState<"video" | "chat">("chat");
@@ -25,11 +25,17 @@ export default function ChatPage() {
       <header className="flex items-center justify-between px-4 sm:px-6 h-14 border-b glass z-30 shrink-0"
               style={{ borderColor: "var(--border)" }}>
         <div className="flex items-center gap-3">
+          <button onClick={openSidebar}
+                  className="lg:hidden p-1.5 rounded-xl hover:bg-white/5 transition-all shrink-0 -ml-1"
+                  style={{ color: "var(--text-dim)" }}
+                  aria-label="Open menu">
+            <Menu size={18} />
+          </button>
           <div className="hidden sm:flex items-center gap-2 px-3 py-1 rounded-full text-[11px] font-bold uppercase tracking-widest"
                style={{ background: "var(--bg-hover)", border: "1px solid var(--border)", color: "var(--text-dim)" }}>
             <LayoutDashboard size={12} /> Workspace
           </div>
-          <span style={{ color: "var(--border-rich)" }}>/</span>
+          <span className="hidden sm:block" style={{ color: "var(--border-rich)" }}>/</span>
           <h2 className="text-[13px] font-semibold truncate max-w-[160px] sm:max-w-[300px]"
               style={{ color: "var(--text-muted)" }}>
             {selectedCollections.length > 1
@@ -66,7 +72,7 @@ export default function ChatPage() {
             {/* Desktop: side-by-side */}
             <div className="hidden lg:flex flex-col w-[45%] xl:w-[40%] border-r"
                  style={{ borderColor: "var(--border)" }}>
-              <VideoPanel collection={activeVideo} seek={seek} theme={theme} />
+              <VideoPanel collection={activeVideo} seek={seek} onSeek={t => handleSourceClick(t)} theme={theme} />
             </div>
             <div className="hidden lg:flex flex-1 flex-col min-w-0">
               <ChatPanel collections={selectedCollections} activeVideo={activeVideo}
@@ -96,7 +102,7 @@ export default function ChatPage() {
                   ? <ChatPanel collections={selectedCollections} activeVideo={activeVideo}
                                onSourceClick={(t, vid) => { handleSourceClick(t, vid); setMobileTab("video"); }}
                                theme={theme} />
-                  : <VideoPanel collection={activeVideo} seek={seek} theme={theme} />}
+                  : <VideoPanel collection={activeVideo} seek={seek} onSeek={t => handleSourceClick(t)} theme={theme} />}
               </div>
             </div>
           </>

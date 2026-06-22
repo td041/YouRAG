@@ -1,5 +1,6 @@
 "use client";
-import { Key, Cpu, Database, Sliders } from "lucide-react";
+import { Key, Cpu, Database, Sliders, Menu } from "lucide-react";
+import { useCollections } from "@/lib/collections-context";
 
 const SECTIONS = [
   {
@@ -44,13 +45,22 @@ const SECTIONS = [
 ] as const;
 
 export default function SettingsPage() {
+  const { openSidebar } = useCollections();
   return (
     <div className="flex flex-col h-full theme-bg theme-text">
-      <header className="px-6 sm:px-8 py-5 border-b shrink-0" style={{ borderColor: "var(--border)" }}>
-        <h1 className="text-2xl font-bold font-display" style={{ color: "var(--text)" }}>Settings</h1>
-        <p className="text-[13px] mt-0.5" style={{ color: "var(--text-dim)" }}>
-          System configuration — edit <code className="px-1 py-0.5 rounded text-xs" style={{ background: "var(--bg-hover)" }}>.env</code> to change values
-        </p>
+      <header className="flex items-start gap-3 px-4 sm:px-6 lg:px-8 py-4 sm:py-5 border-b shrink-0" style={{ borderColor: "var(--border)" }}>
+        <button onClick={openSidebar}
+                className="lg:hidden p-1.5 rounded-xl hover:bg-white/5 transition-all shrink-0 mt-1"
+                style={{ color: "var(--text-dim)" }}
+                aria-label="Open menu">
+          <Menu size={18} />
+        </button>
+        <div>
+          <h1 className="text-2xl font-bold font-display" style={{ color: "var(--text)" }}>Settings</h1>
+          <p className="text-[13px] mt-0.5" style={{ color: "var(--text-dim)" }}>
+            System configuration — edit <code className="px-1 py-0.5 rounded text-xs" style={{ background: "var(--bg-hover)" }}>.env</code> to change values
+          </p>
+        </div>
       </header>
 
       <div className="flex-1 overflow-y-auto p-6 sm:p-8 space-y-5">

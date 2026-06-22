@@ -1,7 +1,7 @@
 DC = docker compose
 export DOCKER_BUILDKIT=1
 
-.PHONY: help setup build up down restart rebuild rebuild-fresh logs logs-backend status shell-backend shell-db test lint clean clean-all benchmark benchmark-generate benchmark-all
+.PHONY: help setup build up down restart rebuild rebuild-fresh rebuild-be rebuild-fe rebuild-app logs logs-backend status shell-backend shell-db test lint clean clean-all benchmark benchmark-generate benchmark-all
 
 help:
 	@echo "YouRAG Commands:"
@@ -10,6 +10,9 @@ help:
 	@echo "  make up           — Chạy hệ thống (background)"
 	@echo "  make down         — Dừng hệ thống"
 	@echo "  make rebuild       — Down + Build + Up (dùng pip cache, nhanh)"
+	@echo "  make rebuild-be    — Rebuild chỉ backend (giữ DB, nhanh)"
+	@echo "  make rebuild-fe    — Rebuild chỉ frontend (giữ DB, nhanh)"
+	@echo "  make rebuild-app   — Rebuild backend + frontend (giữ DB, nhanh)"
 	@echo "  make rebuild-fresh — Down + Build no-cache + Up (build từ đầu hoàn toàn)"
 	@echo "  make logs         — Logs tất cả services"
 	@echo "  make logs-backend — Logs backend"
@@ -62,6 +65,18 @@ rebuild:
 	$(DC) down
 	$(DC) build --pull=false
 	$(DC) up -d
+
+rebuild-be:
+	$(DC) build --pull=false backend
+	$(DC) up -d backend
+
+rebuild-fe:
+	$(DC) build --pull=false frontend
+	$(DC) up -d frontend
+
+rebuild-app:
+	$(DC) build --pull=false backend frontend
+	$(DC) up -d backend frontend
 
 # Dùng khi thay đổi Dockerfile hoặc pyproject.toml (không dùng thường xuyên)
 rebuild-fresh:
