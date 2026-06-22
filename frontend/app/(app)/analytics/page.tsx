@@ -1,8 +1,9 @@
 "use client";
 import { useEffect, useState } from "react";
-import { BarChart2, Zap, Database, Clock, RefreshCw, ExternalLink, TrendingUp, AlertCircle } from "lucide-react";
+import { BarChart2, Zap, Database, RefreshCw, ExternalLink, AlertCircle, Menu, MessageSquare, Upload, Trash2 } from "lucide-react";
 import { useCollections } from "@/lib/collections-context";
 import { fetchBenchmarkReport } from "@/lib/api";
+import { getQueryPerf, getIngestPerf, clearPerf, type QueryPerf, type IngestPerf } from "@/lib/perf-store";
 
 const METRIC_LABELS: Record<string, string> = {
   faithfulness:       "Faithfulness",
@@ -53,16 +54,43 @@ function avgScore(scores: Record<string, number>): number {
   return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : 0;
 }
 
+function avg(nums: (number | undefined)[]): number {
+  const valid = nums.filter((n): n is number => n !== undefined && n > 0);
+  return valid.length ? valid.reduce((a, b) => a + b, 0) / valid.length : 0;
+}
+
+function Sparkline({ values, color = "#818cf8" }: { values: number[]; color?: string }) {
+  if (values.length < 2) return null;
+  const max = Math.max(...values);
+  const min = Math.min(...values);
+  const range = max - min || 1;
+  const w = 80, h = 28, pad = 3;
+  const pts = values.map((v, i) => {
+    const x = pad + (i / (values.length - 1)) * (w - pad * 2);
+    const y = pad + ((max - v) / range) * (h - pad * 2);
+    return `${x},${y}`;
+  }).join(" ");
+  return (
+    <svg width={w} height={h} className="opacity-60">
+      <polyline points={pts} fill="none" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 export default function AnalyticsPage() {
-  const { collections } = useCollections();
+  const { collections, openSidebar } = useCollections();
   const [report, setReport] = useState<Report | null>(null);
   const [loading, setLoading] = useState(true);
+  const [queryPerf, setQueryPerf] = useState<QueryPerf[]>([]);
+  const [ingestPerf, setIngestPerf] = useState<IngestPerf[]>([]);
 
   useEffect(() => {
     fetchBenchmarkReport()
       .then(d => setReport(d ?? { available: false }))
       .catch(() => setReport({ available: false }))
       .finally(() => setLoading(false));
+    setQueryPerf(getQueryPerf());
+    setIngestPerf(getIngestPerf());
   }, []);
 
   const modes = report?.available
@@ -80,31 +108,150 @@ export default function AnalyticsPage() {
 
   return (
     <div className="flex flex-col h-full theme-bg theme-text">
-      <header className="px-6 sm:px-8 py-5 border-b shrink-0" style={{ borderColor: "var(--border)" }}>
-        <h1 className="text-2xl font-bold font-display" style={{ color: "var(--text)" }}>Analytics</h1>
-        <p className="text-[13px] mt-0.5" style={{ color: "var(--text-dim)" }}>
-          RAGAS benchmark · system metrics · performance comparison
-        </p>
+      <header className="flex items-start gap-3 px-4 sm:px-6 lg:px-8 py-4 sm:py-5 border-b shrink-0" style={{ borderColor: "var(--border)" }}>
+        <button onClick={openSidebar}
+                className="lg:hidden p-1.5 rounded-xl hover:bg-white/5 transition-all shrink-0 mt-1"
+                style={{ color: "var(--text-dim)" }}
+                aria-label="Open menu">
+          <Menu size={18} />
+        </button>
+        <div>
+          <h1 className="text-2xl font-bold font-display" style={{ color: "var(--text)" }}>Analytics</h1>
+          <p className="text-[13px] mt-0.5" style={{ color: "var(--text-dim)" }}>
+            RAGAS benchmark · system metrics · performance comparison
+          </p>
+        </div>
       </header>
 
       <div className="flex-1 overflow-y-auto p-6 sm:p-8 space-y-6">
 
         {/* Top stats */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          {[
-            { icon: Database, label: "Indexed Videos",  value: String(collections.length) },
-            { icon: Zap,      label: "Avg Latency",     value: modes[1]?.[1]?.avg_latency_s ? `${modes[1][1]!.avg_latency_s.toFixed(1)}s` : "—" },
-            { icon: TrendingUp, label: "Best Avg Score", value: topMode ? `${Math.round(avgScore(topMode[1].ragas_scores) * 100)}%` : "—" },
-            { icon: Clock,    label: "Questions Tested", value: modes[0]?.[1]?.total_questions ? String(modes[0][1]!.total_questions) : "—" },
-          ].map(({ icon: Icon, label, value }) => (
-            <div key={label} className="rounded-2xl p-5 border"
-                 style={{ background: "var(--bg-card)", borderColor: "var(--border)" }}>
-              <Icon size={18} className="mb-3 text-indigo-400" />
-              <p className="text-2xl font-bold mb-1" style={{ color: "var(--text)" }}>{value}</p>
-              <p className="text-[12px]" style={{ color: "var(--text-dim)" }}>{label}</p>
+        {(() => {
+          const avgQueryMs = avg(queryPerf.filter(q => !q.cached).map(q => q.latency.total));
+          const avgTtft = avg(queryPerf.filter(q => !q.cached).map(q => q.latency.ttft));
+          const avgIngestS = avg(ingestPerf.map(i => i.latency.total_s));
+          return (
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+              {[
+                { icon: Database,   label: "Indexed Videos",   value: String(collections.length),                             color: "text-indigo-400" },
+                { icon: MessageSquare, label: "Avg Query Time", value: avgQueryMs ? `${(avgQueryMs/1000).toFixed(1)}s`  : "—", color: "text-purple-400" },
+                { icon: Zap,        label: "Avg TTFT",          value: avgTtft    ? `${avgTtft.toFixed(0)}ms`           : "—", color: "text-emerald-400" },
+                { icon: Upload,     label: "Avg Ingest Time",   value: avgIngestS ? `${avgIngestS.toFixed(1)}s`         : "—", color: "text-amber-400" },
+              ].map(({ icon: Icon, label, value, color }) => (
+                <div key={label} className="rounded-2xl p-5 border"
+                     style={{ background: "var(--bg-card)", borderColor: "var(--border)" }}>
+                  <Icon size={18} className={`mb-3 ${color}`} />
+                  <p className="text-2xl font-bold mb-1" style={{ color: "var(--text)" }}>{value}</p>
+                  <p className="text-[12px]" style={{ color: "var(--text-dim)" }}>{label}</p>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
+          );
+        })()}
+
+        {/* ── Real-time Performance ── */}
+        {(queryPerf.length > 0 || ingestPerf.length > 0) && (
+          <div className="rounded-2xl border overflow-hidden" style={{ background: "var(--bg-card)", borderColor: "var(--border)" }}>
+            <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: "var(--border)" }}>
+              <div className="flex items-center gap-2">
+                <Zap size={15} className="text-indigo-400" />
+                <h2 className="text-[14px] font-semibold" style={{ color: "var(--text)" }}>Live Performance</h2>
+                <span className="text-[10px] px-2 py-0.5 rounded-full font-bold"
+                      style={{ background: "var(--bg-hover)", color: "var(--text-dim)" }}>
+                  last {Math.max(queryPerf.length, ingestPerf.length)} records
+                </span>
+              </div>
+              <button onClick={() => { clearPerf(); setQueryPerf([]); setIngestPerf([]); }}
+                      className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-semibold hover:bg-rose-500/10 transition-all"
+                      style={{ color: "var(--text-dim)", border: "1px solid var(--border)" }}>
+                <Trash2 size={11} /> Clear
+              </button>
+            </div>
+
+            <div className="p-5 grid sm:grid-cols-2 gap-5">
+              {/* Query latency table */}
+              {queryPerf.length > 0 && (
+                <div>
+                  <div className="flex items-center justify-between mb-3">
+                    <p className="text-[12px] font-bold uppercase tracking-widest" style={{ color: "var(--text-dim)" }}>
+                      Queries ({queryPerf.length})
+                    </p>
+                    <Sparkline values={queryPerf.filter(q=>!q.cached).map(q=>q.latency.total??0).slice(0,12).reverse()} color="#818cf8" />
+                  </div>
+                  <div className="space-y-2 max-h-52 overflow-y-auto custom-scrollbar pr-1">
+                    {queryPerf.slice(0, 15).map((q, i) => (
+                      <div key={i} className="flex items-start gap-2 py-2 border-b last:border-0" style={{ borderColor: "var(--border)" }}>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-[11px] font-medium truncate" style={{ color: "var(--text-muted)" }}>
+                            {q.cached && <span className="text-amber-400 mr-1">⚡</span>}
+                            {q.query.slice(0, 55)}{q.query.length > 55 ? "…" : ""}
+                          </p>
+                          {!q.cached && (
+                            <div className="flex items-center gap-2 mt-1 flex-wrap">
+                              {[
+                                { k: "search", label: "search", color: "#818cf8" },
+                                { k: "rerank", label: "rerank", color: "#a78bfa" },
+                                { k: "ttft",   label: "ttft",   color: "#34d399" },
+                                { k: "llm",    label: "llm",    color: "#f59e0b" },
+                              ].filter(s => q.latency[s.k as keyof typeof q.latency]).map(s => (
+                                <span key={s.k} className="text-[10px] font-mono" style={{ color: s.color }}>
+                                  {s.label} {q.latency[s.k as keyof typeof q.latency]}ms
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                        <span className="text-[11px] font-bold tabular-nums shrink-0 mt-0.5"
+                              style={{ color: q.cached ? "#f59e0b" : q.latency.total && q.latency.total > 5000 ? "#f87171" : "#34d399" }}>
+                          {q.cached ? "cached" : q.latency.total ? `${(q.latency.total/1000).toFixed(1)}s` : "—"}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Ingest latency table */}
+              {ingestPerf.length > 0 && (
+                <div>
+                  <div className="flex items-center justify-between mb-3">
+                    <p className="text-[12px] font-bold uppercase tracking-widest" style={{ color: "var(--text-dim)" }}>
+                      Ingests ({ingestPerf.length})
+                    </p>
+                    <Sparkline values={ingestPerf.map(i=>i.latency.total_s??0).slice(0,12).reverse()} color="#f59e0b" />
+                  </div>
+                  <div className="space-y-2 max-h-52 overflow-y-auto custom-scrollbar pr-1">
+                    {ingestPerf.slice(0, 15).map((ing, i) => (
+                      <div key={i} className="py-2 border-b last:border-0" style={{ borderColor: "var(--border)" }}>
+                        <div className="flex items-start justify-between gap-2">
+                          <p className="text-[11px] font-medium truncate flex-1" style={{ color: "var(--text-muted)" }}>
+                            {ing.title.slice(0, 50)}{ing.title.length > 50 ? "…" : ""}
+                          </p>
+                          <span className="text-[11px] font-bold tabular-nums shrink-0" style={{ color: "#f59e0b" }}>
+                            {ing.latency.total_s?.toFixed(1)}s
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2 mt-1 flex-wrap">
+                          {[
+                            { k: "extract_s", label: "fetch"  },
+                            { k: "chunk_s",   label: "chunk"  },
+                            { k: "embed_s",   label: "embed"  },
+                            { k: "load_s",    label: "upsert" },
+                          ].filter(s => ing.latency[s.k as keyof typeof ing.latency]).map(s => (
+                            <span key={s.k} className="text-[10px] font-mono" style={{ color: "var(--text-dim)" }}>
+                              {s.label} {ing.latency[s.k as keyof typeof ing.latency]?.toFixed(1)}s
+                            </span>
+                          ))}
+                          <span className="text-[10px]" style={{ color: "var(--text-dim)" }}>· {ing.chunks} chunks</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* RAGAS results */}
         {loading ? (
@@ -135,8 +282,11 @@ export default function AnalyticsPage() {
                   {new Date(report.generated_at as string).toLocaleString()}
                 </strong>
               </span>
-              <span className="truncate max-w-xs">
-                Collection: <strong style={{ color: "var(--text-muted)" }}>{report.collection as string}</strong>
+              <span className="truncate max-w-xs" title={report.collection as string}>
+                Collection: <strong style={{ color: "var(--text-muted)" }}>
+                  {collections.find(c => c.name === (report.collection as string))?.title
+                    ?? (report.collection as string | undefined)?.replace(/-+/g, " ") ?? "–"}
+                </strong>
               </span>
             </div>
 

@@ -6,9 +6,10 @@ import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
 import { Message, Collection, Source } from "@/lib/types";
 import { streamChat, fetchSuggestions } from "@/lib/api";
+import { recordQuery } from "@/lib/perf-store";
 import {
   Send, Trash2, Layers, Zap,
-  Cpu, Sparkles, User, Bot, Loader2, Search
+  Cpu, Sparkles, User, Bot, Loader2, Brain
 } from "lucide-react";
 
 interface Props {
@@ -37,6 +38,10 @@ function superscriptNumber(n: number): string {
 }
 
 function MessageContent({ content, onSourceClick }: { content: string; onSourceClick?: (t: number) => void }) {
+  // Strip raw Unicode superscript chars the LLM may hallucinate as footnote markers.
+  // [mm:ss] patterns use regular ASCII digits so they are unaffected.
+  const cleanContent = content.replace(/[¹²³⁴⁵⁶⁷⁸⁹⁰⁻⁺⁼⁽⁾ⁿ]+/g, "");
+
   // Match [mm:ss] or [mm:ss - mm:ss] (range) — capture only the start time
   const TS_RE = /\[(\d{1,2}:\d{2})(?:\s*[-–]\s*\d{1,2}:\d{2})?\]/g;
 
@@ -44,7 +49,7 @@ function MessageContent({ content, onSourceClick }: { content: string; onSourceC
   const seenLabels: string[] = [];
   const footnoteMap = new Map<string, number>();
   let m: RegExpExecArray | null;
-  while ((m = TS_RE.exec(content)) !== null) {
+  while ((m = TS_RE.exec(cleanContent)) !== null) {
     const label = m[1];
     if (!footnoteMap.has(label)) {
       footnoteMap.set(label, seenLabels.length);
@@ -53,7 +58,7 @@ function MessageContent({ content, onSourceClick }: { content: string; onSourceC
   }
 
   // Replace timestamp patterns with a safe HTML tag that rehype-raw will pass through
-  const processed = content.replace(TS_RE, '<ts data-ts="$1"></ts>');
+  const processed = cleanContent.replace(TS_RE, '<ts data-ts="$1"></ts>');
 
   return (
     <div className="prose prose-sm max-w-none leading-relaxed
@@ -104,6 +109,7 @@ export default function ChatPanel({ collections, theme, onSourceClick }: Omit<Pr
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
+  const [progress, setProgress] = useState("");
   const [sessionId, setSessionId] = useState<string | undefined>();
   const [welcomeSuggestions, setWelcomeSuggestions] = useState<string[]>([]);
   const [loadingSuggestions, setLoadingSuggestions] = useState(false);
@@ -184,12 +190,15 @@ export default function ChatPanel({ collections, theme, onSourceClick }: Omit<Pr
       (suggestions) => setMessages(prev =>
         prev.map(m => m.id === botId ? { ...m, suggestions } : m)),
       (id) => setSessionId(id),
-      () => { setStreaming(false); abortRef.current = null; },
+      () => { setStreaming(false); setProgress(""); abortRef.current = null; },
       (err) => {
         setMessages(prev =>
           prev.map(m => m.id === botId ? { ...m, content: `System Error: ${err}` } : m));
         setStreaming(false);
-      }
+        setProgress("");
+      },
+      (msg) => setProgress(msg),
+      (latency, cached) => recordQuery({ query, latency, cached }),
     );
   }
 
@@ -317,10 +326,10 @@ export default function ChatPanel({ collections, theme, onSourceClick }: Omit<Pr
                     }}>
                     {msg.role === "assistant" ? (
                       msg.content === "" && streaming && i === messages.length - 1 ? (
-                        // TTFT indicator — retrieval phase before first token arrives
+                        // TTFT indicator — shows live backend progress before first token arrives
                         <span className="flex items-center gap-2 text-[13px]" style={{ color: textDim }}>
-                          <Search size={13} className="animate-pulse text-indigo-400" />
-                          <span className="animate-pulse">Searching...</span>
+                          <Brain size={13} className="animate-pulse text-indigo-400" />
+                          <span className="animate-pulse">{progress || "Thinking..."}</span>
                         </span>
                       ) : (
                         <>

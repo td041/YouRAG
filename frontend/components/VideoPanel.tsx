@@ -1,14 +1,24 @@
 "use client";
 
-import { useState } from "react";
+import React, { useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import rehypeRaw from "rehype-raw";
 import { Collection } from "@/lib/types";
 import { streamSummary } from "@/lib/api";
 import {
   Play, Sparkles, Loader2,
   ExternalLink, Clock, BookOpen, Info
 } from "lucide-react";
+
+const TS_RE = /\[(\d{1,2}:\d{2})(?:\s*[-–]\s*\d{1,2}:\d{2})?\]/g;
+
+function tsToSeconds(ts: string): number {
+  const parts = ts.split(":").map(Number);
+  return parts.length === 3
+    ? parts[0] * 3600 + parts[1] * 60 + parts[2]
+    : parts[0] * 60 + parts[1];
+}
 
 function YouTubeLogo({ size = 16 }: { size?: number }) {
   return (
@@ -22,10 +32,11 @@ function YouTubeLogo({ size = 16 }: { size?: number }) {
 interface Props {
   collection: Collection | null;
   seek?: { time: number; seq: number };
+  onSeek?: (time: number) => void;
   theme: "dark" | "light";
 }
 
-export default function VideoPanel({ collection, seek, theme }: Props) {
+export default function VideoPanel({ collection, seek, onSeek, theme }: Props) {
   const [summary, setSummary] = useState("");
   const [streaming, setStreaming] = useState(false);
 
@@ -154,6 +165,24 @@ export default function VideoPanel({ collection, seek, theme }: Props) {
                     </div>
                   </div>
                 </button>
+              ) : !summary && streaming ? (
+                /* Skeleton while waiting for first token */
+                <div className="rounded-2xl border overflow-hidden animate-pulse" style={{ borderColor: cardBorder }}>
+                  <div className="px-5 py-3 border-b flex items-center gap-2" style={{ borderColor, background: headerBg }}>
+                    <div className="w-3.5 h-3.5 rounded-full" style={{ background: "var(--border)" }} />
+                    <div className="h-3 w-24 rounded" style={{ background: "var(--border)" }} />
+                    <Loader2 size={13} className="animate-spin text-indigo-500 ml-auto" />
+                  </div>
+                  <div className="p-5 space-y-3" style={{ background: cardBg }}>
+                    {[85, 100, 70, 95, 60, 80].map((w, i) => (
+                      <div key={i} className="h-3 rounded" style={{ width: `${w}%`, background: "var(--border)" }} />
+                    ))}
+                    <div className="h-3 w-1/3 rounded mt-2" style={{ background: "var(--border)" }} />
+                    {[90, 75, 100, 65].map((w, i) => (
+                      <div key={i + 10} className="h-3 rounded" style={{ width: `${w}%`, background: "var(--border)" }} />
+                    ))}
+                  </div>
+                </div>
               ) : (
                 <div className="rounded-2xl border overflow-hidden" style={{ borderColor: cardBorder }}>
                   <div className="px-5 py-3 border-b flex items-center justify-between" style={{ borderColor, background: headerBg }}>
@@ -165,10 +194,31 @@ export default function VideoPanel({ collection, seek, theme }: Props) {
                   </div>
                   <div className="p-5 text-[14px] leading-relaxed font-light prose prose-sm max-w-none
                     prose-p:my-1 prose-ul:my-1 prose-ol:my-1 prose-li:my-0
-                    prose-strong:font-semibold prose-headings:font-bold"
+                    prose-headings:font-bold"
                        style={{ color: textMuted, background: cardBg }}>
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                      {summary || "Initializing synthesis engine..."}
+                    <ReactMarkdown
+                      remarkPlugins={[remarkGfm]}
+                      rehypePlugins={[rehypeRaw]}
+                      components={({
+                        strong: ({ children }) => (
+                          <strong style={{ fontWeight: 700, color: textMain }}>{children}</strong>
+                        ),
+                        ts: (props: { "data-ts"?: string } & React.HTMLAttributes<HTMLElement>) => {
+                          const label = props["data-ts"] ?? "";
+                          const secs = tsToSeconds(label);
+                          return (
+                            <button
+                              onClick={() => onSeek?.(secs)}
+                              className="inline-flex items-center gap-1 text-[11px] font-mono font-semibold px-1.5 py-0.5 rounded border cursor-pointer transition-colors"
+                              style={{ background: "rgba(99,102,241,0.15)", color: "#818cf8", borderColor: "rgba(99,102,241,0.3)" }}
+                            >
+                              {label}
+                            </button>
+                          );
+                        },
+                      } as Parameters<typeof ReactMarkdown>[0]["components"])}
+                    >
+                      {(summary || "Initializing synthesis engine...").replace(TS_RE, '<ts data-ts="$1"></ts>')}
                     </ReactMarkdown>
                     {streaming && (
                       <span className="inline-block w-1.5 h-4 bg-indigo-500 ml-1 rounded-sm blink align-middle" />
