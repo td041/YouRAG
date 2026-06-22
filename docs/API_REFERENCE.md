@@ -284,7 +284,7 @@ Build or rebuild Knowledge Graph for a collection.
 
 🔒 **Protected**
 
-Delete a video collection (Qdrant + graph + BM25 cache).
+Delete a video collection (Qdrant + graph + SPLADE cache).
 
 ```json
 {"status": "deleted", "collection": "ly-thuyet-tro-choi"}

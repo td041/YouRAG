@@ -33,7 +33,7 @@ flowchart TD
     GE --> QD[(Qdrant VectorDB\nBAAI/bge-m3 · 1024-dim\ncosine HNSW)]
     GE --> KG[(Knowledge Graph\nNetworkX DiGraph)]
 
-    Q([User Query]) --> HR[HybridRetriever\nDense + BM25 · RRF Fusion]
+    Q([User Query]) --> HR[HybridRetriever\nDense + SPLADE · RRF Fusion]
     Q --> GR[GraphRetriever\nmulti-hop traversal]
     QD --> HR
     KG --> GR

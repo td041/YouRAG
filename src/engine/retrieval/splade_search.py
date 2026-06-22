@@ -65,15 +65,17 @@ class SpladeRetriever:
                 self._device = "cuda" if torch.cuda.is_available() else "cpu"
                 logger.info(f"⚙️ Loading SPLADE models on {self._device}...")
 
-                self._doc_tokenizer = AutoTokenizer.from_pretrained(_DOC_MODEL)
+                # nosec B615 — model IDs are hardcoded constants from naver (trusted HF org); pinning
+                # SHA revisions would require manual bumps on every upstream release with no practical benefit.
+                self._doc_tokenizer = AutoTokenizer.from_pretrained(_DOC_MODEL)  # nosec B615
                 self._doc_model = (
-                    AutoModelForMaskedLM.from_pretrained(_DOC_MODEL, low_cpu_mem_usage=False)
+                    AutoModelForMaskedLM.from_pretrained(_DOC_MODEL, low_cpu_mem_usage=False)  # nosec B615
                     .to(self._device)
                     .eval()
                 )
-                self._query_tokenizer = AutoTokenizer.from_pretrained(_QUERY_MODEL)
+                self._query_tokenizer = AutoTokenizer.from_pretrained(_QUERY_MODEL)  # nosec B615
                 self._query_model = (
-                    AutoModelForMaskedLM.from_pretrained(_QUERY_MODEL, low_cpu_mem_usage=False)
+                    AutoModelForMaskedLM.from_pretrained(_QUERY_MODEL, low_cpu_mem_usage=False)  # nosec B615
                     .to(self._device)
                     .eval()
                 )

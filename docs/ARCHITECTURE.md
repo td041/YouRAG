@@ -38,7 +38,7 @@ Qdrant VectorDB (BAAI/bge-m3, 1024-dim, cosine HNSW)
     ↓
 HybridRetriever
   Dense: Qdrant vector search (bge-m3)
-  Sparse: BM25 in-memory index
+  Sparse: SPLADE neural in-memory index
   Fusion: RRF (alpha=0.5, k=60)
     ↓
 CrossEncoderReranker (BAAI/bge-reranker-v2-m3, top_k=9)
@@ -131,7 +131,7 @@ from src.core.redis_client import get_redis # Lazy Redis client (returns None if
 
 - **JSON over pickle** for graph store — eliminates RCE risk
 - **Redis-first storage** with local file fallback — survives Redis downtime
-- **BM25 in-memory** with 2000-doc cap — prevents OOM on large collections
+- **SPLADE in-memory** with 2000-doc cap — prevents OOM on large collections
 - **Round-robin Groq keys** for benchmark — shares daily quota evenly across accounts
 - **Visual Frame RAG** skips gracefully when `GEMINI_API_KEY` not set — text-only fallback
 - **CORS restricted** to `ALLOWED_ORIGINS` env var — no wildcard + credentials in production
