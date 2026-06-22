@@ -6,6 +6,7 @@ from typing import Optional, Dict as TypingDict, List
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
+import asyncio
 import os
 import sys
 import uuid
@@ -27,6 +28,7 @@ from src.core.config import settings
 from src.core.postgres import init_db
 from src.core.logger import setup_logger
 from src.cache.semantic_cache import SemanticCache
+from src.engine.retrieval.contextual_compressor import ContextualCompressor
 from src.api.auth import require_api_key
 from src.core.langfuse_client import get_langfuse
 import re
@@ -104,8 +106,9 @@ class AIStore:
     generator = None
     summarizer = None
     graph_retriever = None
-    hybrid_retriever = None  # singleton — BM25 index cached across requests
+    hybrid_retriever = None
     cache = None
+    compressor = None
 
 def _load_component(name: str, factory, attr: str) -> None:
     """Load một AI component vào AIStore; log lỗi thay vì crash toàn app."""
@@ -132,6 +135,7 @@ async def startup_event():
     _load_component("GraphRetriever", lambda: GraphRetriever(), "graph_retriever")
     _load_component("HybridRetriever", lambda: HybridRetriever(top_k=10), "hybrid_retriever")
     _load_component("SemanticCache", lambda: SemanticCache(), "cache")
+    _load_component("ContextualCompressor", lambda: ContextualCompressor(), "compressor")
 
     loaded = [k for k, v in vars(AIStore).items() if not k.startswith("_") and v is not None]
     logger.info(f"✅ Startup complete. Loaded: {loaded}")
@@ -323,11 +327,24 @@ def _stream_worker_loop() -> None:
                 time.sleep(1)
 
 
-def _invalidate_bm25_cache(collection_name: str) -> None:
-    """Invalidate BM25 in-memory cache for a collection (called on ingest and delete)."""
+def _invalidate_splade_cache(collection_name: str) -> None:
+    """Invalidate SPLADE in-memory vector cache for a collection (called on ingest and delete)."""
     if AIStore.hybrid_retriever:
-        AIStore.hybrid_retriever.sparse._bm25_cache.pop(collection_name, None)
-        AIStore.hybrid_retriever.sparse._doc_mappings.pop(collection_name, None)
+        AIStore.hybrid_retriever.sparse.clear_cache(collection_name)
+
+
+def _pregen_summary(collection_name: str) -> None:
+    """Pre-generate và cache summary vào Redis ngay sau ingest.
+    Chạy trong background thread để không block ingest job.
+    Khi user hỏi lần đầu, summary đã sẵn trong cache.
+    """
+    try:
+        if AIStore.summarizer:
+            logger.info(f"[PreGen] Generating summary for '{collection_name}'...")
+            AIStore.summarizer.summarize(collection_name)
+            logger.info(f"[PreGen] Summary cached for '{collection_name}'")
+    except Exception as e:
+        logger.warning(f"[PreGen] Summary pre-gen failed for '{collection_name}': {e}")
 
 
 def _run_ingest_job(
@@ -342,9 +359,16 @@ def _run_ingest_job(
             use_visual_rag=use_visual_rag,
         )
         result = pipeline.run(url)
-        # Invalidate BM25 cache so next query uses fresh chunks
-        if result.get("collection_name"):
-            _invalidate_bm25_cache(result["collection_name"])
+        collection_name = result.get("collection_name")
+        if collection_name:
+            _invalidate_splade_cache(collection_name)
+            # Pre-generate summary vào Redis ngay sau ingest
+            # → Q&A đầu tiên sẽ có context tổng quan, không cần gọi LLM trong chat
+            t = threading.Thread(
+                target=_pregen_summary, args=(collection_name,), daemon=True,
+                name=f"pregen-summary-{collection_name[:20]}"
+            )
+            t.start()
         _job_update(job_id, {"status": "done", "result": result})
     except Exception as e:
         logger.error(f"[IngestJob {job_id}] failed: {e}")
@@ -424,8 +448,11 @@ async def delete_collection(collection_name: str, _: str = Depends(require_api_k
         _r = _get_redis_client()
         if _r:
             _r.delete(f"graph:{collection_name}")
-        # Invalidate BM25 cache trong HybridRetriever singleton
-        _invalidate_bm25_cache(collection_name)
+        # Invalidate SPLADE cache trong HybridRetriever singleton
+        _invalidate_splade_cache(collection_name)
+        # Invalidate summary cache
+        if _r:
+            _r.delete(f"summary:{collection_name}")
         logger.info(f"🗑️ Deleted collection: {collection_name}")
         return {"status": "deleted", "collection": collection_name}
     except Exception as e:
@@ -492,6 +519,7 @@ async def build_graph(collection: str, _: str = Depends(require_api_key)):
 @limiter.limit("20/minute")
 async def chat_rag(request: Request, req: ChatRequest, _: str = Depends(require_api_key)):
     try:
+        loop = asyncio.get_running_loop()
         session_id = req.session_id or str(uuid.uuid4())
         history_mgr = ChatHistoryManager(session_id=session_id, collection_name=req.collection)
         history_mgr.add_message(role="user", content=req.query)
@@ -514,9 +542,11 @@ async def chat_rag(request: Request, req: ChatRequest, _: str = Depends(require_
                 "cached": True
             }
 
-        # 1. Hybrid Search
+        # 1. Hybrid Search (blocking → offload)
         hybrid = AIStore.hybrid_retriever or HybridRetriever(top_k=10)
-        candidates = hybrid.search(req.query, collection_name=req.collection)
+        candidates = await loop.run_in_executor(
+            None, lambda: hybrid.search(req.query, collection_name=req.collection)
+        )
 
         if not candidates:
             return {"answer": "Không tìm thấy thông tin phù hợp trong video này.", "sources": [], "facts": [], "session_id": session_id}
@@ -527,20 +557,44 @@ async def chat_rag(request: Request, req: ChatRequest, _: str = Depends(require_
             if AIStore.graph_retriever else {"facts": [], "graph_summary": ""}
         )
 
-        # 3. Rerank
-        final_chunks = AIStore.reranker.rerank(query=req.query, chunks=candidates, top_k=9)
+        # 3. Rerank (blocking → offload)
+        final_chunks = await loop.run_in_executor(
+            None, lambda: AIStore.reranker.rerank(query=req.query, chunks=candidates, top_k=9)
+        )
 
-        # 4. Global Summary
-        global_summary = AIStore.summarizer.summarize(req.collection)
+        # 4. Contextual Compression — bỏ câu noise trước khi pass LLM (blocking → offload)
+        if AIStore.compressor:
+            try:
+                _chunks = final_chunks
+                final_chunks = await loop.run_in_executor(
+                    None, lambda: AIStore.compressor.compress(req.query, _chunks)
+                )
+            except Exception as e:
+                logger.warning(f"[Compressor] Failed in /chat: {e}")
 
-        # 5. Generate Answer
-        answer = AIStore.generator.generate(
-            query=req.query,
-            retrieved_chunks=final_chunks,
-            global_summary=global_summary,
-            graph_facts=graph_data.get("facts", []),
-            graph_summary=graph_data.get("graph_summary", ""),
-            chat_history=chat_history_str
+        # 5. Global Summary — chỉ đọc Redis cache, không generate mới
+        global_summary = ""
+        try:
+            from src.engine.generation.summarizer import _get_redis as _sum_redis
+            _r = _sum_redis()
+            if _r:
+                _cached = _r.get(f"summary:{req.collection}")
+                if _cached:
+                    global_summary = _cached
+        except Exception:
+            pass
+
+        # 6. Generate Answer (blocking → offload)
+        _fc = final_chunks
+        answer = await loop.run_in_executor(
+            None, lambda: AIStore.generator.generate(
+                query=req.query,
+                retrieved_chunks=_fc,
+                global_summary=global_summary,
+                graph_facts=graph_data.get("facts", []),
+                graph_summary=graph_data.get("graph_summary", ""),
+                chat_history=chat_history_str,
+            )
         )
 
         history_mgr.add_message(role="assistant", content=answer)
@@ -594,67 +648,140 @@ async def get_chat_history(session_id: str, collection: str):
 @limiter.limit("20/minute")
 async def chat_rag_stream(request: Request, req: ChatRequest, _: str = Depends(require_api_key)):
     """Endpoint trả về Streaming Response với Global Context."""
+    # Session setup — lightweight, no I/O
     try:
         session_id = req.session_id or str(uuid.uuid4())
-        # Resolve collections first so history manager always gets a valid name
         collections_list = req.resolved_collections
         history_mgr = ChatHistoryManager(session_id=session_id, collection_name=collections_list[0])
         history_mgr.add_message(role="user", content=req.query)
         chat_history_str = history_mgr.format_for_prompt()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-        # --- CHECK SEMANTIC CACHE ---
-        cached_data = AIStore.cache.check_cache(req.query, collection_name=collections_list[0]) if AIStore.cache else None
-        if cached_data:
-            def cached_generator():
-                answer = cached_data["answer"]
+    async def stream():
+        """Async generator: stream progress updates + final LLM response.
+        All blocking CPU/IO work is offloaded via run_in_executor so the
+        event loop stays responsive. Progress lines (prefix __PROGRESS__)
+        are stripped by the frontend and shown as status indicators.
+        """
+        loop = asyncio.get_running_loop()
+        t_start = time.perf_counter()
+
+        def _ms(t0: float, t1: float) -> int:
+            return round((t1 - t0) * 1000)
+
+        try:
+            # --- CHECK SEMANTIC CACHE (fast, no blocking) ---
+            t0 = time.perf_counter()
+            cached_data = (
+                AIStore.cache.check_cache(req.query, collection_name=collections_list[0])
+                if AIStore.cache else None
+            )
+            t_cache_ms = _ms(t0, time.perf_counter())
+            if cached_data:
+                answer = AIStore.generator._strip_superscripts(cached_data["answer"])
                 yield answer
                 history_mgr.add_message(role="assistant", content=answer)
+                logger.info(f"[Latency] cache_hit=True cache={t_cache_ms}ms query='{req.query[:60]}'")
                 meta = json.dumps({
                     "sources": cached_data.get("sources", []),
                     "facts": cached_data.get("facts", []),
                     "session_id": session_id,
                     "suggestions": [],
                     "cached": True,
+                    "latency_ms": {"cache": t_cache_ms, "total": t_cache_ms},
                 })
                 yield f"\n\n__META__{meta}"
+                return
 
-            return StreamingResponse(cached_generator(), media_type="text/plain")
-
-        # 1. Hybrid Search (single or multi-collection)
-        hybrid = AIStore.hybrid_retriever or HybridRetriever(top_k=10)
-        candidates = hybrid.search_multi(req.query, collections_list)
-
-        if not candidates:
-            async def no_result():
-                yield "Không tìm thấy thông tin phù hợp trong video này."
-            return StreamingResponse(no_result(), media_type="text/plain")
-
-        # 2. Graph RAG Search — merge facts from all selected collections
-        all_facts: list = []
-        all_graph_summary = ""
-        for _col in collections_list:
+            # 1. Hybrid Search (blocking: SPLADE index + ThreadPoolExecutor)
+            yield "__PROGRESS__Đang tìm kiếm tài liệu...\n"
+            hybrid = AIStore.hybrid_retriever or HybridRetriever(top_k=10)
+            t0 = time.perf_counter()
             try:
-                _gd = AIStore.graph_retriever.search(req.query, collection_name=_col)
-                all_facts.extend(_gd.get("facts", []))
-                if _gd.get("graph_summary"):
-                    all_graph_summary = _gd["graph_summary"]
+                candidates = await asyncio.wait_for(
+                    loop.run_in_executor(None, lambda: hybrid.search_multi(req.query, collections_list)),
+                    timeout=45.0,
+                )
+            except asyncio.TimeoutError:
+                logger.error("[Stream] Hybrid search timed out after 45s")
+                yield "Hệ thống quá tải, vui lòng thử lại sau."
+                return
+            t_search_ms = _ms(t0, time.perf_counter())
+
+            if not candidates:
+                yield "Không tìm thấy thông tin phù hợp trong video này."
+                return
+
+            # 2. Graph RAG Search — fast (reads from Redis cache)
+            t0 = time.perf_counter()
+            all_facts: list = []
+            all_graph_summary = ""
+            for _col in collections_list:
+                try:
+                    _gd = AIStore.graph_retriever.search(req.query, collection_name=_col)
+                    all_facts.extend(_gd.get("facts", []))
+                    if _gd.get("graph_summary"):
+                        all_graph_summary = _gd["graph_summary"]
+                except Exception:
+                    pass
+            graph_data = {"facts": all_facts, "graph_summary": all_graph_summary}
+            t_graph_ms = _ms(t0, time.perf_counter())
+
+            # 3. Rerank (blocking: cross-encoder on GPU)
+            yield "__PROGRESS__Đang reranking kết quả...\n"
+            t0 = time.perf_counter()
+            try:
+                final_chunks = await asyncio.wait_for(
+                    loop.run_in_executor(
+                        None,
+                        lambda: AIStore.reranker.rerank(query=req.query, chunks=candidates, top_k=9),
+                    ),
+                    timeout=30.0,
+                )
+            except asyncio.TimeoutError:
+                logger.warning("[Stream] Reranker timed out, using raw candidates")
+                final_chunks = candidates[:9]
+            t_rerank_ms = _ms(t0, time.perf_counter())
+
+            # 4. Contextual Compression
+            yield "__PROGRESS__Đang nén ngữ cảnh...\n"
+            _fc = final_chunks
+            _col0 = collections_list[0]
+            t0 = time.perf_counter()
+            try:
+                final_chunks = await loop.run_in_executor(
+                    None,
+                    lambda: AIStore.compressor.compress(req.query, _fc) if AIStore.compressor else _fc,
+                )
+            except Exception as e:
+                logger.warning(f"[Compressor] Failed, using raw chunks: {e}")
+            t_compress_ms = _ms(t0, time.perf_counter())
+
+            # 5. Summary — CHỈ lấy từ Redis cache, không generate mới trong chat.
+            # Background pre-generation đã chạy sau ingest — nếu chưa có cache thì skip.
+            t0 = time.perf_counter()
+            global_summary = ""
+            try:
+                from src.engine.generation.summarizer import _get_redis as _sum_redis
+                _r = _sum_redis()
+                if _r:
+                    _cached = _r.get(f"summary:{_col0}")
+                    if _cached:
+                        global_summary = _cached
+                        logger.info(f"[Chat] Summary cache hit for [{_col0}]")
+                    else:
+                        logger.info("[Chat] Summary cache miss — skipping LLM call in stream")
             except Exception:
                 pass
-        graph_data = {"facts": all_facts, "graph_summary": all_graph_summary}
+            t_summary_ms = _ms(t0, time.perf_counter())
 
-        # 3. Rerank
-        final_chunks = AIStore.reranker.rerank(query=req.query, chunks=candidates, top_k=9)
+            t_ttft_ms = _ms(t_start, time.perf_counter())  # snapshot before first LLM token
 
-        # 4. Global Summary (use first collection for summary)
-        global_summary = AIStore.summarizer.summarize(collections_list[0])
-
-        # 5. Streaming Generator
-        def response_generator():
-            full_response = ""
+            # 6. Langfuse tracing setup
             _lf = get_langfuse()
             _trace = None
             _gen_span = None
-
             if _lf:
                 try:
                     _trace = _lf.trace(
@@ -663,29 +790,40 @@ async def chat_rag_stream(request: Request, req: ChatRequest, _: str = Depends(r
                         input={"query": req.query, "collection": req.collection},
                         tags=["streaming"],
                     )
-                    # Retrieval is already complete — log as a finished span
                     _retrieval_span = _trace.span(
-                        name="retrieval",
-                        input={"query": req.query, "top_k": 10},
+                        name="retrieval", input={"query": req.query, "top_k": 10}
                     )
                     _retrieval_span.end(output={
                         "candidates": len(candidates),
                         "reranked": len(final_chunks),
                         "top_score": round(final_chunks[0].get("hybrid_score", 0), 4) if final_chunks else 0,
                         "graph_facts": len(graph_data.get("facts", [])),
+                        "latency_ms": {
+                            "cache": t_cache_ms,
+                            "search": t_search_ms,
+                            "graph": t_graph_ms,
+                            "rerank": t_rerank_ms,
+                            "compress": t_compress_ms,
+                            "summary": t_summary_ms,
+                            "ttft": t_ttft_ms,
+                        },
                     })
                     _gen_span = _trace.generation(
                         name="llm-stream",
                         model=settings.LLM_MODEL_NAME,
                         model_parameters={"temperature": 0.2, "max_tokens": 2000},
-                        input={
-                            "chunks_count": len(final_chunks),
-                            "has_graph": bool(graph_data.get("facts")),
-                        },
+                        input={"chunks_count": len(final_chunks), "has_graph": bool(graph_data.get("facts"))},
                     )
                 except Exception:
                     pass
 
+            # 7. LLM generation — buffer server-side so citations can be validated
+            #    before any text reaches the client, then re-stream the clean response.
+            yield "__PROGRESS__Đang tạo câu trả lời...\n"
+            full_response = ""
+            t0 = time.perf_counter()
+            first_token = True
+            t_first_token_ms = 0
             try:
                 for chunk in AIStore.generator.generate_stream(
                     query=req.query,
@@ -693,10 +831,21 @@ async def chat_rag_stream(request: Request, req: ChatRequest, _: str = Depends(r
                     global_summary=global_summary,
                     graph_facts=graph_data.get("facts", []),
                     graph_summary=graph_data.get("graph_summary", ""),
-                    chat_history=chat_history_str
+                    chat_history=chat_history_str,
                 ):
+                    if first_token:
+                        t_first_token_ms = _ms(t0, time.perf_counter())
+                        first_token = False
                     full_response += chunk
-                    yield chunk
+
+                # Validate & clean before sending to client
+                full_response = AIStore.generator._strip_superscripts(full_response)
+                full_response = AIStore.generator._validate_citations(full_response, final_chunks)
+
+                # Re-stream validated text in small chunks for UI responsiveness
+                _chunk_size = 40
+                for _i in range(0, len(full_response), _chunk_size):
+                    yield full_response[_i:_i + _chunk_size]
             except Exception as e:
                 logger.error(f"[Stream] Generation error: {e}")
                 if _lf:
@@ -708,8 +857,19 @@ async def chat_rag_stream(request: Request, req: ChatRequest, _: str = Depends(r
                         _lf.flush()
                     except Exception:
                         pass
-                yield f"\n\n[Error: {str(e)}]"
+                history_mgr.add_message(role="assistant", content=f"[Lỗi: {e}]")
+                yield f"\n\n[Lỗi: {str(e)}]"
                 return
+
+            t_total_ms = _ms(t_start, time.perf_counter())
+            t_llm_ms = _ms(t0, time.perf_counter())
+            logger.info(
+                f"[Latency] query='{req.query[:60]}' "
+                f"cache={t_cache_ms}ms search={t_search_ms}ms graph={t_graph_ms}ms "
+                f"rerank={t_rerank_ms}ms compress={t_compress_ms}ms summary={t_summary_ms}ms "
+                f"ttft={t_ttft_ms}ms llm_first_token={t_first_token_ms}ms llm_total={t_llm_ms}ms "
+                f"TOTAL={t_total_ms}ms candidates={len(candidates)} chunks={len(final_chunks)}"
+            )
 
             if _lf:
                 try:
@@ -719,11 +879,24 @@ async def chat_rag_stream(request: Request, req: ChatRequest, _: str = Depends(r
                             usage={"output": len(full_response.split())},
                         )
                     if _trace:
-                        _trace.update(output={"answer_length": len(full_response)})
+                        _trace.update(output={
+                            "answer_length": len(full_response),
+                            "latency_ms": {
+                                "cache": t_cache_ms,
+                                "search": t_search_ms,
+                                "graph": t_graph_ms,
+                                "rerank": t_rerank_ms,
+                                "compress": t_compress_ms,
+                                "summary": t_summary_ms,
+                                "ttft": t_ttft_ms,
+                                "llm_first_token": t_first_token_ms,
+                                "llm_total": t_llm_ms,
+                                "total": t_total_ms,
+                            },
+                        })
                 except Exception:
                     pass
 
-            # Lưu lại tin nhắn AI sau khi stream xong
             history_mgr.add_message(role="assistant", content=full_response)
 
             from src.core.utils import format_timestamp
@@ -738,22 +911,17 @@ async def chat_rag_stream(request: Request, req: ChatRequest, _: str = Depends(r
                 for c in final_chunks
             ]
 
-            # --- SAVE TO CACHE ---
             if AIStore.cache:
                 AIStore.cache.save_to_cache(
                     query=req.query,
                     answer=full_response,
                     collection_name=collections_list[0],
                     sources=sources,
-                    facts=graph_data.get("facts", [])
+                    facts=graph_data.get("facts", []),
                 )
 
-            # Generate Suggested Questions — grounded in actual retrieved video chunks
             suggestions = []
-            # Only use content that's confirmed to be in the video
-            video_excerpts = "\n".join(
-                f"- {c['content'][:150]}" for c in final_chunks[:4]
-            )
+            video_excerpts = "\n".join(f"- {c['content'][:150]}" for c in final_chunks[:4])
             sq_prompt = (
                 f"These are real excerpts from the video:\n{video_excerpts}\n\n"
                 f"The user just asked: '{req.query}'\n"
@@ -762,7 +930,9 @@ async def chat_rag_stream(request: Request, req: ChatRequest, _: str = Depends(r
                 "Output ONLY: question1|question2|question3"
             )
             try:
-                sq_list = AIStore.generator.llm.chat_complete(sq_prompt, system="You are a helpful assistant.", max_tokens=80)
+                sq_list = AIStore.generator.llm.chat_complete(
+                    sq_prompt, system="You are a helpful assistant.", max_tokens=80
+                )
                 suggestions = _parse_suggestions(sq_list)
             except Exception as e:
                 logger.error(f"Error generating suggestions: {e}")
@@ -773,19 +943,28 @@ async def chat_rag_stream(request: Request, req: ChatRequest, _: str = Depends(r
                 except Exception:
                     pass
 
-            # Single JSON meta frame — safe against LLM output containing delimiter strings
             meta = json.dumps({
                 "sources": sources,
                 "facts": graph_data.get("facts", []),
                 "session_id": session_id,
                 "suggestions": suggestions[:3],
                 "cached": False,
+                "latency_ms": {
+                    "search": t_search_ms,
+                    "graph": t_graph_ms,
+                    "rerank": t_rerank_ms,
+                    "ttft": t_ttft_ms,
+                    "llm": t_llm_ms,
+                    "total": t_total_ms,
+                },
             })
             yield f"\n\n__META__{meta}"
 
-        return StreamingResponse(response_generator(), media_type="text/plain")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        except Exception as e:
+            logger.error(f"[Stream] Unexpected error: {e}", exc_info=True)
+            yield f"\n\n[Lỗi hệ thống: {str(e)}]"
+
+    return StreamingResponse(stream(), media_type="text/plain")
 
 @app.get("/suggestions/{collection}")
 @limiter.limit("10/minute")
