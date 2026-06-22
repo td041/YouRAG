@@ -5,6 +5,19 @@ from src.core.logger import logger
 from src.core.utils import format_timestamp
 from src.core.config import settings
 
+_SUMMARY_KEY_PREFIX = "summary:"
+
+
+def _get_redis():
+    try:
+        import redis as redis_lib
+        r = redis_lib.from_url(settings.REDIS_URL, decode_responses=True, socket_connect_timeout=1)
+        r.ping()
+        return r
+    except Exception:
+        return None
+
+
 class VideoSummarizer:
     """Module Tóm tắt Toàn bộ nội dung Video.
     Kéo các chunk từ Qdrant, sắp xếp lại theo thời gian và nhờ LLM đọc/tóm tắt lại.
@@ -17,6 +30,14 @@ class VideoSummarizer:
 
     def summarize(self, collection_name: str) -> Optional[str]:
         """Tóm tắt một video đã được Ingest trong hệ thống."""
+        cache_key = f"{_SUMMARY_KEY_PREFIX}{collection_name}"
+        r = _get_redis()
+        if r:
+            cached = r.get(cache_key)
+            if cached:
+                logger.info(f"⚡ Summary cache hit for [{collection_name}]")
+                return cached
+
         logger.info(f"📝 Bắt đầu tóm tắt video từ collection: '{collection_name}'...")
         
         try:
@@ -96,16 +117,17 @@ Yêu cầu định dạng nghiêm ngặt (Markdown):
 
 Hãy phân tích thật sâu sát, không bỏ sót các mẹo vặt hay điểm nhấn quan trọng nào của video!
 """
-            # Groq Free Tier giới hạn 6000 Token 1 phút dùng chung (Cả Prompt vào + Chữ ra)
-            # Ta giảm max_tokens về 1500 để nhường phần lớn token cho việc đọc Video dài
             summary = self.llm.chat_complete(
                 prompt=prompt,
                 system="Bạn là một chuyên gia phân tích dữ liệu video. Hãy tóm tắt cô đọng bằng tiếng Việt.",
-                max_tokens=1500,
+                max_tokens=2500,
                 temperature=0.3
             )
             
             logger.info("✅ Quá trình tóm tắt hoàn tất!")
+            if summary and r:
+                r.set(cache_key, summary)
+                logger.info(f"💾 Summary cached to Redis [{collection_name}]")
             return summary
 
         except Exception as e:
@@ -114,8 +136,18 @@ Hãy phân tích thật sâu sát, không bỏ sót các mẹo vặt hay điểm
 
     def summarize_stream(self, collection_name: str):
         """Tóm tắt video theo kiểu Streaming (nhả chữ dần dần)."""
+        cache_key = f"{_SUMMARY_KEY_PREFIX}{collection_name}"
+        r = _get_redis()
+        if r:
+            cached = r.get(cache_key)
+            if cached:
+                logger.info(f"⚡ Summary stream cache hit for [{collection_name}]")
+                yield cached
+                return
+
         logger.info(f"📝 Bắt đầu tóm tắt STREAM từ collection: '{collection_name}'...")
-        
+        accumulated: list[str] = []
+
         try:
             records = []
             offset = None
@@ -163,26 +195,32 @@ Hãy phân tích thật sâu sát, không bỏ sót các mẹo vặt hay điểm
             transcript_text = "\n".join(full_transcript)
 
             prompt = f"""
-Dưới đây là phần kịch bản trích mẫu của một video:
+Dưới đây là phần kịch bản trích mẫu của một video, với mốc thời gian đi kèm:
+
 <transcript>
 {transcript_text}
 </transcript>
 
-Hãy viết một bản TÓM TẮT CHI TIẾT VÀ CHUYÊN SÂU bằng TIẾNG VIỆT.
+Hãy viết một bản TÓM TẮT CHI TIẾT VÀ CHUYÊN SÂU bằng TIẾNG VIỆT tự nhiên, dùng định dạng Markdown.
 Yêu cầu:
-1. Giới thiệu tổng quan.
-2. Nội dung chi tiết từng phần kèm mốc thời gian [mm:ss] ở cuối mỗi ý.
-3. Kết luận.
-Hãy viết văn phong chuyên nghiệp, dễ hiểu.
+1. **Giới thiệu Tổng quan** — 1 đoạn văn (3-5 câu) nói video nói về chủ đề gì, mục tiêu là gì.
+2. **Nội dung Chi tiết (Diễn biến)** — gạch đầu dòng cho từng phân đoạn. Dùng **in đậm** cho khái niệm, thuật ngữ, điểm mấu chốt quan trọng. Cuối mỗi ý thêm mốc thời gian `[mm:ss]`.
+3. **Kết luận / Lời khuyên** — tổng kết ngắn gọn.
+Viết văn phong chuyên nghiệp, không bỏ sót điểm nhấn quan trọng.
 """
-            # Gọi streaming — max_tokens 1500 để tránh vượt 6000 TPM Groq free tier
             for chunk in self.llm.chat_complete_stream(
                 prompt=prompt,
                 system="Bạn là một chuyên gia phân tích dữ liệu video. Hãy tóm tắt thật hay và đầy đủ.",
-                max_tokens=1500,
+                max_tokens=2500,
                 temperature=0.3
             ):
+                accumulated.append(chunk)
                 yield chunk
+
+            if accumulated and r:
+                full = "".join(accumulated)
+                r.set(cache_key, full)
+                logger.info(f"💾 Summary stream cached to Redis [{collection_name}]")
 
         except Exception as e:
             logger.error(f"❌ Lỗi summarize stream: {e}")

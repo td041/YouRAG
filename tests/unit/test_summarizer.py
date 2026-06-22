@@ -6,15 +6,17 @@ from unittest.mock import MagicMock
 
 @pytest.fixture(autouse=True)
 def mock_deps(mocker):
-    """Mock LLMClient and db_instance."""
+    """Mock LLMClient, db_instance, and Redis (so cache is always cold in unit tests)."""
+    mocker.patch("src.engine.generation.summarizer._get_redis", return_value=None)
+
     mock_llm_cls = mocker.patch("src.engine.generation.summarizer.LLMClient")
     mock_llm = MagicMock()
     mock_llm.chat_complete.return_value = "Bản tóm tắt video."
     mock_llm_cls.return_value = mock_llm
-    
+
     mock_db = MagicMock()
     mocker.patch("src.engine.generation.summarizer.db_instance", mock_db)
-    
+
     return mock_llm, mock_db
 
 
