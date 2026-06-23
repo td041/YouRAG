@@ -27,6 +27,8 @@ def mock_aistore():
     AIStore.pipeline = MagicMock()
     AIStore.reranker = MagicMock()
     AIStore.generator = MagicMock()
+    AIStore.generator._strip_superscripts.side_effect = lambda text: text
+    AIStore.generator._validate_citations.side_effect = lambda text, chunks: text
     AIStore.summarizer = MagicMock()
     AIStore.graph_retriever = MagicMock()
     AIStore.cache = MagicMock()
