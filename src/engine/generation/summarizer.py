@@ -14,7 +14,8 @@ def _get_redis():
         r = redis_lib.from_url(settings.REDIS_URL, decode_responses=True, socket_connect_timeout=1)
         r.ping()
         return r
-    except Exception:
+    except Exception as e:
+        logger.debug(f"[Summarizer] Redis unavailable: {e}")
         return None
 
 

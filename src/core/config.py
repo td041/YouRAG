@@ -53,6 +53,16 @@ class Settings(BaseSettings):
     GRAPH_MAX_CHUNKS: int = 40        # Số chunks tối đa để build knowledge graph (video dài cần nhiều hơn)
     YOUTUBE_FETCH_TIMEOUT: int = 120  # Timeout (seconds) cho YouTube metadata + transcript fetch
 
+    # Chunking tuning dials
+    CHUNK_PERCENTILE_THRESHOLD: int = 15    # Ngưỡng percentile để phát hiện thung lũng ngữ nghĩa
+    CHUNK_PAUSE_THRESHOLD_SEC: float = 1.5  # Ngưỡng khoảng dừng lời nói (giây)
+    CHUNK_MIN_CHARS: int = 200              # Độ dài tối thiểu mỗi chunk (ký tự)
+    CHUNK_MAX_CHARS: int = 2000             # Độ dài tối đa mỗi chunk (ký tự)
+    CONTEXTUAL_MAX_WORKERS: int = 5         # Số luồng song song cho Contextual Enrichment
+
+    # CORS
+    ALLOWED_ORIGINS: str = "http://localhost:3000,http://localhost:3001"
+
     # 7. Cấu hình Kết nối (Connection Hub)
     # Tự động lấy từ Docker Compose hoặc file .env
     DATABASE_URL: str = "sqlite:///./qdrant_db/chat_history.db"

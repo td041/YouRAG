@@ -103,8 +103,8 @@ class ChatHistoryManager:
                                 pipe.rpush(self.redis_key, json.dumps(msg))
                             pipe.expire(self.redis_key, CACHE_TTL)
                             pipe.execute()
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug(f"[ChatHistory] Redis pipeline write failed: {e}")
 
                 return history
         except Exception as e:

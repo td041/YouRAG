@@ -7,6 +7,7 @@ from src.engine.ingestion.youtube_loader import YouTubeLoader
 from src.engine.ingestion.chunker import SemanticChunker
 from src.engine.ingestion.graph_extractor import GraphExtractor
 from src.engine.ingestion.contextual_enricher import ContextualEnricher
+from src.core.config import settings
 from src.core.database import db_instance
 from src.core.logger import logger
 from src.engine.retrieval.graph_rag import KnowledgeGraphBuilder
@@ -28,16 +29,16 @@ def _run_semantic_chunking(raw_data: Dict[str, Any], use_contextual: bool) -> Li
             logger.warning(f"LLMClient init failed: {e}")
 
     chunker = SemanticChunker(
-        percentile_threshold=15,
-        pause_threshold_sec=1.5,
-        min_chars_per_chunk=200,
-        max_chars_per_chunk=2000,
+        percentile_threshold=settings.CHUNK_PERCENTILE_THRESHOLD,
+        pause_threshold_sec=settings.CHUNK_PAUSE_THRESHOLD_SEC,
+        min_chars_per_chunk=settings.CHUNK_MIN_CHARS,
+        max_chars_per_chunk=settings.CHUNK_MAX_CHARS,
         llm_client=llm_client,
     )
     chunks = chunker.chunk_document(raw_data["metadata"], raw_data["transcript"])
 
     if use_contextual and llm_client:
-        enricher = ContextualEnricher(max_workers=5, llm_client=llm_client)
+        enricher = ContextualEnricher(max_workers=settings.CONTEXTUAL_MAX_WORKERS, llm_client=llm_client)
         full_text = " ".join(r["text"] for r in raw_data["transcript"])
         chunks = enricher.enrich(full_text, chunks)
 

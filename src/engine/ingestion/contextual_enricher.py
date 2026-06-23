@@ -121,8 +121,8 @@ class ContextualEnricher:
             try:
                 with open(path, "r", encoding="utf-8") as f:
                     return json.load(f)["context"]
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"[ContextualEnricher] Local cache read failed ({path}): {e}")
         return None
 
     def _write_cache(self, key: str, context: str):

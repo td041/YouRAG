@@ -88,7 +88,7 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 if _prometheus_available:
     Instrumentator().instrument(app).expose(app)
 
-_ALLOWED_ORIGINS = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:3001").split(",") if o.strip()]
+_ALLOWED_ORIGINS = [o.strip() for o in settings.ALLOWED_ORIGINS.split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_ALLOWED_ORIGINS,
@@ -290,7 +290,7 @@ def _stream_worker_loop() -> None:
         r.xgroup_create(_STREAM_KEY, _STREAM_GROUP, id="0", mkstream=True)
         logger.info(f"[StreamWorker] Consumer group '{_STREAM_GROUP}' created")
     except Exception:
-        pass
+        logger.debug(f"[StreamWorker] Consumer group '{_STREAM_GROUP}' already exists — OK")
 
     # Crash recovery: reclaim messages stuck > 60s from a previous process
     try:
@@ -390,8 +390,8 @@ def list_collections():
             if records and records[0].payload:
                 meta = records[0].payload
                 return {"name": name, "title": meta.get("title", name), "video_id": meta.get("video_id")}
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"[collections] Failed to fetch meta for '{name}': {e}")
         return {"name": name, "title": name, "video_id": None}
 
     with ThreadPoolExecutor(max_workers=8) as pool:
